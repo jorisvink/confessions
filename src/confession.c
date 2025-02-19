@@ -160,7 +160,8 @@ struct {
 void
 usage(void)
 {
-	printf("Usage: tt [cathedral ip] [cathedral port] [flock] [tunnel]\n");
+	printf("Usage: confessions \\\n");
+	printf("          [cathedral ip] [cathedral port] [flock] [tunnel]\n");
 	printf("          [identity] [cathedral secret path] [kek path]\n");
 
 	exit(1);
