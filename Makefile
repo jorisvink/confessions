@@ -11,10 +11,15 @@ INSTALL_DIR=$(PREFIX)/bin
 CFLAGS+=-std=c99 -pedantic -Wall -Werror -Wstrict-prototypes
 CFLAGS+=-Wmissing-prototypes -Wmissing-declarations -Wshadow
 CFLAGS+=-Wpointer-arith -Wcast-qual -Wsign-compare -O2
-CFLAGS+=-fstack-protector-all -Wtype-limits -fno-common -I/usr/local/include
+CFLAGS+=-fstack-protector-all -Wtype-limits -fno-common
+CFLAGS+=-Iinclude -I/usr/local/include
 CFLAGS+=-g
 
-SRC=	src/confession.c
+SRC=	src/confession.c \
+	src/audio.c \
+	src/network.c \
+	src/ring.c \
+	src/tunnel.c
 
 ifeq ("$(SANITIZE)", "1")
 	CFLAGS+=-fsanitize=address,undefined
