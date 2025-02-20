@@ -150,6 +150,7 @@ struct state {
 };
 
 /* src/kyrka.c */
+int	confessions_last_signal(void);
 void	fatal(const char *, ...) __attribute__((noreturn));
 
 /* src/audio.c */

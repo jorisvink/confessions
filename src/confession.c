@@ -27,18 +27,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
-
-#include <opus.h>
-#include <portaudio.h>
-#include <libkyrka/libkyrka.h>
 
 #include "confession.h"
 
 static void	usage(void) __attribute__((noreturn));
+
+static void	signal_hdlr(int);
+static void	signal_memfault(int);
+
+static void	confessions_signal_trap(int);
 static void	confessions_buffers_initialize(struct state *);
 static void	confessions_split_ip_port(char *, u_int32_t *, u_int16_t *);
+
+/* The last received signal. */
+static volatile sig_atomic_t	sig_recv = -1;
 
 void
 usage(void)
@@ -71,11 +76,12 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-	int				ch;
 	struct timespec			ts;
 	struct pollfd			pfd;
 	struct state			state;
 	time_t				stats;
+	sigset_t			sigset;
+	int				ch, running;
 	struct kyrka_cathedral_cfg	*cathedral, cfg;
 
 	if (argc < 3)
@@ -169,6 +175,21 @@ main(int argc, char **argv)
 		fatal("what is mode?");
 	}
 
+	confessions_signal_trap(SIGINT);
+	confessions_signal_trap(SIGHUP);
+	confessions_signal_trap(SIGQUIT);
+	confessions_signal_trap(SIGTERM);
+	confessions_signal_trap(SIGSEGV);
+
+	if (sigfillset(&sigset) == -1)
+		fatal("sigfillset: %s", strerror(errno));
+
+	sigdelset(&sigset, SIGINT);
+	sigdelset(&sigset, SIGHUP);
+	sigdelset(&sigset, SIGTERM);
+	sigdelset(&sigset, SIGQUIT);
+	(void)sigprocmask(SIG_BLOCK, &sigset, NULL);
+
 	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 	state.now = ts.tv_sec;
 
@@ -180,11 +201,21 @@ main(int argc, char **argv)
 	confessions_network_initialize(&state);
 
 	stats = 0;
+	running = 1;
 
 	pfd.fd = state.fd;
 	pfd.events = POLLIN;
 
-	for (;;) {
+	while (running) {
+		switch (confessions_last_signal()) {
+		case SIGINT:
+		case SIGHUP:
+		case SIGTERM:
+		case SIGQUIT:
+			running = 0;
+			continue;
+		}
+
 		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 		state.now = ts.tv_sec;
 
@@ -203,7 +234,7 @@ main(int argc, char **argv)
 
 		confessions_tunnel_manage(&state);
 
-		if (poll(&pfd, 1, 10) == -1)
+		if (poll(&pfd, 1, 10) == -1 && errno != EINTR)
 			fatal("poll: %s", strerror(errno));
 
 		if (pfd.revents & POLLIN)
@@ -212,6 +243,9 @@ main(int argc, char **argv)
 		confessions_network_recv_packets(&state);
 
 	}
+
+	printf("shutting down\n");
+	free(state.data);
 
 	(void)close(state.fd);
 
@@ -240,6 +274,20 @@ fatal(const char *fmt, ...)
 	fprintf(stderr, "\n");
 
 	exit(1);
+}
+
+/*
+ * Returns the last received signal to the caller and resets sig_recv.
+ */
+int
+confessions_last_signal(void)
+{
+	int	sig;
+
+	sig = sig_recv;
+	sig_recv = -1;
+
+	return (sig);
 }
 
 /*
@@ -291,4 +339,47 @@ confessions_split_ip_port(char *str, u_int32_t *ip, u_int16_t *port)
 		fatal("failed to parse port '%s'", p);
 
 	*port = htons(*port);
+}
+
+/*
+ * Let the given signal be caught by our signal handler.
+ */
+static void
+confessions_signal_trap(int sig)
+{
+	struct sigaction	sa;
+
+	memset(&sa, 0, sizeof(sa));
+
+	if (sig == SIGSEGV)
+		sa.sa_handler = signal_memfault;
+	else
+		sa.sa_handler = signal_hdlr;
+
+	if (sigfillset(&sa.sa_mask) == -1)
+		fatal("sigfillset: %s", strerror(errno));
+
+	if (sigaction(sig, &sa, NULL) == -1)
+		fatal("sigaction: %s", strerror(errno));
+}
+
+/*
+ * Our signal handler, doesn't do much more than set sig_recv so it can
+ * be obtained by confessions_last_signal().
+ */
+static void
+signal_hdlr(int sig)
+{
+	sig_recv = sig;
+}
+
+/*
+ * The signal handler for when a segmentation fault occurred, we are
+ * catching this so we can just cleanup before dying.
+ */
+static void
+signal_memfault(int sig)
+{
+	kyrka_emergency_erase();
+	abort();
 }
