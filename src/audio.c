@@ -104,7 +104,6 @@ confessions_audio_callback(const void *input, void *output,
 
 		memcpy(output, &state->rx_buf[state->rx_offset],
 		    samples * CONFESSIONS_SAMPLE_SIZE);
-
 		state->rx_offset += (samples * CONFESSIONS_SAMPLE_SIZE);
 
 		if (state->rx_offset == CONFESSIONS_SAMPLE_BYTES) {
