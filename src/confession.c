@@ -171,7 +171,6 @@ main(int argc, char **argv)
 
 	confessions_split_ip_port(argv[0], &state.peer_ip, &state.peer_port);
 
-	confessions_opus_initialize(&state);
 	confessions_audio_initialize(&state);
 	confessions_buffers_initialize(&state);
 	confessions_tunnel_initialize(&state, cathedral);

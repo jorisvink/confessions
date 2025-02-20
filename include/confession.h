@@ -152,7 +152,6 @@ struct state {
 void	fatal(const char *, ...) __attribute__((noreturn));
 
 /* src/audio.c */
-void	confessions_opus_initialize(struct state *);
 void	confessions_audio_initialize(struct state *);
 int	confessions_audio_callback(const void *, void *, unsigned long,
 	    const PaStreamCallbackTimeInfo *, PaStreamCallbackFlags, void *);

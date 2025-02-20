@@ -21,6 +21,8 @@
 
 #include "confession.h"
 
+static void	audio_opus_initialize(struct state *);
+
 /*
  * Initialize portaudio by opening the default devices in full-duplex mode
  * getting both capture and playback.
@@ -44,6 +46,8 @@ confessions_audio_initialize(struct state *state)
 
 	if ((err = Pa_StartStream(state->stream)) != paNoError)
 		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
+
+	audio_opus_initialize(state);
 }
 
 /*
@@ -115,8 +119,8 @@ confessions_audio_callback(const void *input, void *output,
 /*
  * Initialize the OPUS codec state.
  */
-void
-confessions_opus_initialize(struct state *state)
+static void
+audio_opus_initialize(struct state *state)
 {
 	int	err;
 
