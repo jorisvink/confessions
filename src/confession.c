@@ -126,6 +126,8 @@ struct {
 	OpusEncoder			*encoder;
 	OpusDecoder			*decoder;
 
+	time_t				now;
+	time_t				last_rx;
 	time_t				key_send;
 	time_t				key_refresh;
 	time_t				cathedral_notify;
@@ -170,13 +172,17 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-	struct pollfd	pfd;
-	time_t		now, last;
+	struct timespec		ts;
+	struct pollfd		pfd;
+	time_t			stats;
 
 	if (argc != 8)
 		usage();
 
 	memset(&state, 0, sizeof(state));
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	state.now = ts.tv_sec;
 
 	confessions_buffers_initialize();
 	confessions_audio_initialize();
@@ -184,14 +190,18 @@ main(int argc, char **argv)
 	confessions_tunnel_initialize(argv);
 	confessions_network_initialize(argv);
 
-	time(&last);
+	stats = 0;
 
 	pfd.fd = state.fd;
 	pfd.events = POLLIN;
 
 	for (;;) {
-		time(&now);
-		if ((now - last) >= 1) {
+		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+		state.now = ts.tv_sec;
+
+		if ((state.now - stats) >= 1) {
+			stats = state.now;
+
 			printf("rx[%zu, %zu] tx[%zu, %zu]\n",
 			    state.rx_pkt, state.rx_len,
 			    state.tx_pkt, state.tx_len);
@@ -199,9 +209,7 @@ main(int argc, char **argv)
 			state.tx_len = 0;
 			state.rx_len = 0;
 			state.tx_pkt = 0;
-			state.rx_pkt= 0;
-
-			last = now;
+			state.rx_pkt = 0;
 		}
 
 		confessions_tunnel_manage();
@@ -232,6 +240,8 @@ void
 fatal(const char *fmt, ...)
 {
 	va_list		args;
+
+	kyrka_emergency_erase();
 
 	va_start(args, fmt);
 	vfprintf(stderr, fmt, args);
@@ -367,6 +377,8 @@ confessions_tunnel_initialize(char **argv)
 	if (kyrka_purgatory_ifc(state.tunnel,
 	    confessions_crypto_output, NULL) == -1)
 		fatal("failed to set purgatory interface");
+
+	state.last_rx = state.now;
 }
 
 void
@@ -376,6 +388,11 @@ confessions_tunnel_event(KYRKA *ctx, union kyrka_event *evt)
 
 	switch (evt->type) {
 	case KYRKA_EVENT_TX_ACTIVE:
+		/*
+		 * A bit of an oxymoron maybe, but when we get an TX active
+		 * event it means we received a key offer from the peer.
+		 */
+		state.last_rx = state.now;
 		printf("TX SA active 0x%08x\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_RX_ACTIVE:
@@ -383,6 +400,9 @@ confessions_tunnel_event(KYRKA *ctx, union kyrka_event *evt)
 		break;
 	case KYRKA_EVENT_TX_EXPIRED:
 		printf("TX SA 0x%08x expired\n", evt->tx.spi);
+		break;
+	case KYRKA_EVENT_TX_ERASED:
+		printf("TX SA 0x%08x erased, peer inactive\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
 		in.s_addr = evt->peer.ip;
@@ -448,12 +468,8 @@ confessions_network_initialize(char **argv)
 void
 confessions_tunnel_manage(void)
 {
-	struct timespec		ts;
-
-	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
-
-	if (ts.tv_sec >= state.cathedral_notify) {
-		state.cathedral_notify = ts.tv_sec + 5;
+	if (state.now >= state.cathedral_notify) {
+		state.cathedral_notify = state.now + 5;
 
 		if (kyrka_cathedral_notify(state.tunnel) == -1)
 			fatal("failed to notify cathedral");
@@ -462,21 +478,24 @@ confessions_tunnel_manage(void)
 			fatal("failed to send NAT detect");
 	}
 
-	if (ts.tv_sec >= state.key_refresh) {
-		state.key_send = ts.tv_sec;
-		state.key_refresh = ts.tv_sec + 120;
+	if (state.now >= state.key_refresh) {
+		state.key_send = state.now;
+		state.key_refresh = state.now + 120;
 		if (kyrka_key_generate(state.tunnel) == -1)
 			fatal("failed to generate key offer");
 	}
 
-	if (ts.tv_sec >= state.key_send) {
-		state.key_send = ts.tv_sec + 1;
+	if (state.now >= state.key_send) {
+		state.key_send = state.now + 1;
 		if (kyrka_key_offer(state.tunnel) == -1 &&
 		    kyrka_last_error(state.tunnel) != KYRKA_ERROR_NO_SECRET) {
 			fatal("failed to offer key: %d",
 			    kyrka_last_error(state.tunnel));
 		}
 	}
+
+	if (state.last_rx != 0 && (state.now - state.last_rx) >= 5)
+		kyrka_peer_timeout(state.tunnel);
 }
 
 void
@@ -518,11 +537,11 @@ confessions_network_input(void)
 		    pkt, sizeof(pkt), MSG_DONTWAIT)) == -1) {
 			if (errno != EAGAIN)
 				fatal("recv failed: %s", strerror(errno));
-			return;
+			break;
 		}
 
 		if (ret == 0)
-			return;
+			break;
 
 		state.rx_pkt++;
 		state.rx_len += ret;
@@ -532,8 +551,6 @@ confessions_network_input(void)
 			    kyrka_last_error(state.tunnel));
 		}
 	}
-
-	exit(0);
 }
 
 void
@@ -543,6 +560,8 @@ confessions_clear_output(const void *data, size_t len,
 	u_int8_t	*ptr;
 	int		idx, samples;
 	opus_int16	pcm[CONFESSIONS_SAMPLE_COUNT];
+
+	state.last_rx = state.now;
 
 	if (seq != state.seq + 1) {
 		printf(">> packet loss detected\n");
@@ -565,8 +584,6 @@ confessions_clear_output(const void *data, size_t len,
 	}
 
 	state.seq = seq;
-
-	//printf("opus decoded %d samples\n", samples);
 
 	for (idx = 0; idx < samples; idx++) {
 		ptr[2 * idx] = pcm[idx] & 0xff;
