@@ -147,14 +147,21 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
 		in.s_addr = evt->peer.ip;
-		state->peer_ip = evt->peer.ip;
-		state->peer_port = evt->peer.port;
+		if (state->peer_ip != evt->peer.ip ||
+		    state->peer_port != evt->peer.port) {
+			state->peer_ip = evt->peer.ip;
+			state->peer_port = evt->peer.port;
 
-		if (state->peer_ip != state->cathedral_ip &&
-		    state->peer_port != state->cathedral_port) {
-			printf("[peer]: moved to peer-to-peer @ %s:%u\n",
-			    inet_ntoa(in), evt->peer.port);
+			if (state->peer_ip != state->cathedral_ip &&
+			    state->peer_port != state->cathedral_port) {
+				printf("[peer]: p2p discovery %s:%u\n",
+				    inet_ntoa(in), evt->peer.port);
+			}
 		}
+		break;
+	case KYRKA_EVENT_AMBRY_RECEIVED:
+		printf("[ambry]: generation 0x%08x active\n",
+		    evt->ambry.generation);
 		break;
 	}
 }
