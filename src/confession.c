@@ -38,9 +38,21 @@ static void	usage(void) __attribute__((noreturn));
 static void	signal_hdlr(int);
 static void	signal_memfault(int);
 
+static void	confessions_proc_initialize(char **);
+static void	confessions_proc_name(struct state *,
+		    struct kyrka_cathedral_cfg *);
+
 static void	confessions_signal_trap(int);
+static void	confessions_signal_initialize(void);
+
+static void	confessions_run(struct state *);
 static void	confessions_buffers_initialize(struct state *);
 static void	confessions_split_ip_port(char *, u_int32_t *, u_int16_t *);
+
+/* Used for setting the process titles. */
+extern char		**environ;
+static size_t		proc_title_max = 0;
+static char		**proc_argv = NULL;
 
 /* The last received signal. */
 static volatile sig_atomic_t	sig_recv = -1;
@@ -76,16 +88,14 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-	struct timespec			ts;
-	struct pollfd			pfd;
+	int				ch;
 	struct state			state;
-	time_t				stats;
-	sigset_t			sigset;
-	int				ch, running;
 	struct kyrka_cathedral_cfg	*cathedral, cfg;
 
 	if (argc < 3)
 		usage();
+
+	confessions_proc_initialize(argv);
 
 	memset(&cfg, 0, sizeof(cfg));
 	memset(&state, 0, sizeof(state));
@@ -175,74 +185,16 @@ main(int argc, char **argv)
 		fatal("what is mode?");
 	}
 
-	confessions_signal_trap(SIGINT);
-	confessions_signal_trap(SIGHUP);
-	confessions_signal_trap(SIGQUIT);
-	confessions_signal_trap(SIGTERM);
-	confessions_signal_trap(SIGSEGV);
-
-	if (sigfillset(&sigset) == -1)
-		fatal("sigfillset: %s", strerror(errno));
-
-	sigdelset(&sigset, SIGINT);
-	sigdelset(&sigset, SIGHUP);
-	sigdelset(&sigset, SIGTERM);
-	sigdelset(&sigset, SIGQUIT);
-	(void)sigprocmask(SIG_BLOCK, &sigset, NULL);
-
-	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
-	state.now = ts.tv_sec;
+	confessions_signal_initialize();
 
 	confessions_split_ip_port(argv[0], &state.peer_ip, &state.peer_port);
-
 	confessions_audio_initialize(&state);
 	confessions_buffers_initialize(&state);
 	confessions_tunnel_initialize(&state, cathedral);
 	confessions_network_initialize(&state);
 
-	stats = 0;
-	running = 1;
-
-	pfd.fd = state.fd;
-	pfd.events = POLLIN;
-
-	while (running) {
-		switch (confessions_last_signal()) {
-		case SIGINT:
-		case SIGHUP:
-		case SIGTERM:
-		case SIGQUIT:
-			running = 0;
-			continue;
-		}
-
-		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
-		state.now = ts.tv_sec;
-
-		if (state.debug && (state.now - stats) >= 1) {
-			stats = state.now;
-
-			printf("rx[%zu, %zu] tx[%zu, %zu]\n",
-			    state.rx_pkt, state.rx_len,
-			    state.tx_pkt, state.tx_len);
-
-			state.tx_len = 0;
-			state.rx_len = 0;
-			state.tx_pkt = 0;
-			state.rx_pkt = 0;
-		}
-
-		confessions_tunnel_manage(&state);
-
-		if (poll(&pfd, 1, 10) == -1 && errno != EINTR)
-			fatal("poll: %s", strerror(errno));
-
-		if (pfd.revents & POLLIN)
-			confessions_network_input(&state);
-
-		confessions_network_recv_packets(&state);
-
-	}
+	confessions_proc_name(&state, cathedral);
+	confessions_run(&state);
 
 	printf("shutting down\n");
 	free(state.data);
@@ -291,6 +243,30 @@ confessions_last_signal(void)
 }
 
 /*
+ * Perform signal setup for the program.
+ */
+static void
+confessions_signal_initialize(void)
+{
+	sigset_t	sigset;
+
+	confessions_signal_trap(SIGINT);
+	confessions_signal_trap(SIGHUP);
+	confessions_signal_trap(SIGQUIT);
+	confessions_signal_trap(SIGTERM);
+	confessions_signal_trap(SIGSEGV);
+
+	if (sigfillset(&sigset) == -1)
+		fatal("sigfillset: %s", strerror(errno));
+
+	sigdelset(&sigset, SIGINT);
+	sigdelset(&sigset, SIGHUP);
+	sigdelset(&sigset, SIGTERM);
+	sigdelset(&sigset, SIGQUIT);
+	(void)sigprocmask(SIG_BLOCK, &sigset, NULL);
+}
+
+/*
  * Setup the buffers that are going to be used by the different components.
  */
 static void
@@ -311,6 +287,66 @@ confessions_buffers_initialize(struct state *state)
 	for (idx = 0; idx < CONFESSIONS_BUF_COUNT; idx++) {
 		ptr = &state->data[idx * CONFESSIONS_SAMPLE_BYTES];
 		confessions_ring_queue(&state->buffers, ptr);
+	}
+}
+
+/*
+ * Run the main loop for confessions, handling our tunnel and network packets.
+ */
+static void
+confessions_run(struct state *state)
+{
+	struct timespec		ts;
+	struct pollfd		pfd;
+	time_t			stats;
+	int			running;
+
+	PRECOND(state != NULL);
+
+	stats = 0;
+	running = 1;
+
+	pfd.fd = state->fd;
+	pfd.events = POLLIN;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	state->now = ts.tv_sec;
+
+	while (running) {
+		switch (confessions_last_signal()) {
+		case SIGINT:
+		case SIGHUP:
+		case SIGTERM:
+		case SIGQUIT:
+			running = 0;
+			continue;
+		}
+
+		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+		state->now = ts.tv_sec;
+
+		if (state->debug && (state->now - stats) >= 1) {
+			stats = state->now;
+
+			printf("rx[%zu, %zu] tx[%zu, %zu]\n",
+			    state->rx_pkt, state->rx_len,
+			    state->tx_pkt, state->tx_len);
+
+			state->tx_len = 0;
+			state->rx_len = 0;
+			state->tx_pkt = 0;
+			state->rx_pkt = 0;
+		}
+
+		confessions_tunnel_manage(state);
+
+		if (poll(&pfd, 1, 10) == -1 && errno != EINTR)
+			fatal("poll: %s", strerror(errno));
+
+		if (pfd.revents & POLLIN)
+			confessions_network_input(state);
+
+		confessions_network_recv_packets(state);
 	}
 }
 
@@ -361,6 +397,61 @@ confessions_signal_trap(int sig)
 
 	if (sigaction(sig, &sa, NULL) == -1)
 		fatal("sigaction: %s", strerror(errno));
+}
+
+/*
+ * Prepare for modifying the proctitle.
+ */
+static void
+confessions_proc_initialize(char **argv)
+{
+	int		i;
+	char		*p;
+
+	PRECOND(argv != NULL);
+
+	proc_argv = argv;
+	proc_title_max = 0;
+
+	for (i = 0; environ[i] != NULL; i++) {
+		if ((p = strdup(environ[i])) == NULL)
+			fatal("strdup");
+		proc_title_max += strlen(environ[i]) + 1;
+		environ[i] = p;
+	}
+
+	for (i = 0; proc_argv[i] != NULL; i++)
+		proc_title_max += strlen(proc_argv[i]) + 1;
+}
+
+/*
+ * Sets the process title to the given string.
+ */
+static void
+confessions_proc_name(struct state *state, struct kyrka_cathedral_cfg *cfg)
+{
+	struct in_addr		in;
+	int			len;
+
+	PRECOND(state != NULL);
+	PRECOND((state->mode == CONFESSIONS_MODE_DIRECT && cfg == NULL) ||
+	    (state->mode == CONFESSIONS_MODE_CATHEDRAL && cfg != NULL));
+
+	proc_argv[1] = NULL;
+
+	if (state->mode == CONFESSIONS_MODE_DIRECT) {
+		in.s_addr = state->peer_ip;
+		len = snprintf(proc_argv[0], proc_title_max,
+		    "confessions [%s:%u]", inet_ntoa(in), state->peer_port);
+	} else {
+		len = snprintf(proc_argv[0],
+		    proc_title_max, "confessions [0x%04x]", cfg->tunnel);
+	}
+
+	if (len == -1 || (size_t)len >= proc_title_max)
+		fatal("failed to set proc title");
+
+	memset(proc_argv[0] + len, 0, proc_title_max - len);
 }
 
 /*
