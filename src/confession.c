@@ -287,5 +287,5 @@ confessions_split_ip_port(char *str, u_int32_t *ip, u_int16_t *port)
 	if (sscanf(p, "%hu", port) != 1)
 		fatal("failed to parse port '%s'", p);
 
-	*port = htobe16(*port);
+	*port = htons(*port);
 }
