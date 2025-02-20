@@ -97,11 +97,14 @@ main(int argc, char **argv)
 		fatal("unknown mode '%s'", argv[1]);
 	}
 
-	while ((ch = getopt(argc, argv, "b:f:i:k:s:t:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:df:i:k:s:t:")) != -1) {
 		switch (ch) {
 		case 'b':
 			confessions_split_ip_port(optarg,
 			    &state.local_ip, &state.local_port);
+			break;
+		case 'd':
+			state.debug = 1;
 			break;
 		case 'f':
 			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
@@ -185,7 +188,7 @@ main(int argc, char **argv)
 		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 		state.now = ts.tv_sec;
 
-		if ((state.now - stats) >= 1) {
+		if (state.debug && (state.now - stats) >= 1) {
 			stats = state.now;
 
 			printf("rx[%zu, %zu] tx[%zu, %zu]\n",

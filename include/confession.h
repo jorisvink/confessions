@@ -105,6 +105,7 @@ struct confessions_ring {
 struct state {
 	int				fd;
 	int				mode;
+	int				debug;
 	const char			*secret;
 
 	KYRKA				*tunnel;

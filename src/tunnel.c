@@ -133,16 +133,17 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		 * event it means we received a key offer from the peer.
 		 */
 		state->last_rx = state->now;
-		printf("TX SA active 0x%08x\n", evt->tx.spi);
+		printf("[peer]: online - 0x%08x\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_RX_ACTIVE:
-		printf("RX SA active 0x%08x\n", evt->rx.spi);
+		if (state->debug)
+			printf("RX SA active 0x%08x\n", evt->rx.spi);
 		break;
 	case KYRKA_EVENT_TX_EXPIRED:
-		printf("TX SA 0x%08x expired\n", evt->tx.spi);
+		printf("[peer]: key expired - 0x%08x\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_TX_ERASED:
-		printf("TX SA 0x%08x erased, peer inactive\n", evt->tx.spi);
+		printf("[peer]: disconnected - 0x%08x\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
 		in.s_addr = evt->peer.ip;
@@ -151,7 +152,7 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 
 		if (state->peer_ip != state->cathedral_ip &&
 		    state->peer_port != state->cathedral_port) {
-			printf("p2p active %s:%u\n",
+			printf("[peer]: moved to peer-to-peer @ %s:%u\n",
 			    inet_ntoa(in), evt->peer.port);
 		}
 		break;
@@ -178,22 +179,23 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	state->last_rx = state->now;
 
 	if (seq != state->seq + 1) {
-		printf(">> packet loss detected\n");
+		if (state->debug)
+			printf("[net]: packet loss detected\n");
 		if ((samples = opus_decode(state->decoder,
 		    NULL, 0, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
-			printf("opus_decode: %d\n", samples);
+			printf("[net]: opus_decode: %d\n", samples);
 			return;
 		}
 	} else {
 		if ((samples = opus_decode(state->decoder,
 		    data, len, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
-			printf("opus_decode: %d\n", samples);
+			printf("[net]: opus_decode: %d\n", samples);
 			return;
 		}
 	}
 
 	if ((ptr = confessions_ring_dequeue(&state->buffers)) == NULL) {
-		printf("%s: out of buffers\n", __func__);
+		printf("[net]: out of buffers\n");
 		return;
 	}
 
