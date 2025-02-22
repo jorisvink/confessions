@@ -81,7 +81,7 @@ confessions_tunnel_manage(struct state *state)
 
 	if (state->mode == CONFESSIONS_MODE_CATHEDRAL &&
 	    state->now >= state->cathedral_notify) {
-		state->cathedral_notify = state->now + 5;
+		state->cathedral_notify = state->now + 1;
 
 		if (kyrka_cathedral_notify(state->tunnel) == -1)
 			fatal("failed to notify cathedral");
