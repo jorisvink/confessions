@@ -125,6 +125,7 @@ struct state {
 	size_t				rx_pkt;
 	size_t				rx_len;
 
+	u_int64_t			peer_id;
 	u_int32_t			peer_ip;
 	u_int16_t			peer_port;
 

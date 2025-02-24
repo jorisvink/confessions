@@ -106,8 +106,12 @@ confessions_tunnel_manage(struct state *state)
 		}
 	}
 
-	if (state->last_rx != 0 && (state->now - state->last_rx) >= 5)
+	if (state->last_rx != 0 && (state->now - state->last_rx) >= 5) {
+		printf("now: %lu, last_rx: %lu\n", state->now,
+		    state->last_rx);
+		state->last_rx = state->now;
 		kyrka_peer_timeout(state->tunnel);
+	}
 }
 
 /*
@@ -134,6 +138,16 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		 */
 		state->last_rx = state->now;
 		printf("[peer]: online - 0x%08x\n", evt->tx.spi);
+
+		if (state->peer_id != 0 && state->peer_id != evt->tx.id) {
+			printf("[peer]: restarted, offering new key\n");
+			if (kyrka_key_generate(ctx) == -1) {
+				fatal("kyrka_key_generate: %d",
+				    kyrka_last_error(ctx));
+			}
+		}
+
+		state->peer_id = evt->tx.id;
 		break;
 	case KYRKA_EVENT_RX_ACTIVE:
 		if (state->debug)
@@ -143,7 +157,9 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		printf("[peer]: key expired - 0x%08x\n", evt->tx.spi);
 		break;
 	case KYRKA_EVENT_TX_ERASED:
-		printf("[peer]: disconnected - 0x%08x\n", evt->tx.spi);
+		printf("[peer]: inactivity detected - 0x%08x\n", evt->tx.spi);
+		state->peer_ip = state->cathedral_ip;
+		state->peer_port = state->cathedral_port;
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
 		in.s_addr = evt->peer.ip;
