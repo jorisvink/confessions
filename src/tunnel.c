@@ -107,8 +107,6 @@ confessions_tunnel_manage(struct state *state)
 	}
 
 	if (state->last_rx != 0 && (state->now - state->last_rx) >= 5) {
-		printf("now: %lu, last_rx: %lu\n", state->now,
-		    state->last_rx);
 		state->last_rx = state->now;
 		kyrka_peer_timeout(state->tunnel);
 	}
