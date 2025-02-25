@@ -328,7 +328,7 @@ confessions_run(struct state *state)
 		if (state->debug && (state->now - stats) >= 1) {
 			stats = state->now;
 
-			printf("rx[%zu, %zu] tx[%zu, %zu]\n",
+			printf("[stats]: rx[%zu, %zu] tx[%zu, %zu]\n",
 			    state->rx_pkt, state->rx_len,
 			    state->tx_pkt, state->tx_len);
 

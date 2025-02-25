@@ -68,6 +68,7 @@ confessions_tunnel_initialize(struct state *state,
 		fatal("failed to set purgatory interface");
 
 	state->last_rx = state->now;
+	state->state = CONFESSIONS_STATE_PENDING;
 }
 
 /*
@@ -81,7 +82,7 @@ confessions_tunnel_manage(struct state *state)
 
 	if (state->mode == CONFESSIONS_MODE_CATHEDRAL &&
 	    state->now >= state->cathedral_notify) {
-		state->cathedral_notify = state->now + 1;
+		state->cathedral_notify = state->now + 5;
 
 		if (kyrka_cathedral_notify(state->tunnel) == -1)
 			fatal("failed to notify cathedral");
@@ -146,6 +147,7 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		}
 
 		state->peer_id = evt->tx.id;
+		state->state = CONFESSIONS_STATE_ONLINE;
 		break;
 	case KYRKA_EVENT_RX_ACTIVE:
 		if (state->debug)
@@ -158,8 +160,14 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		printf("[peer]: inactivity detected - 0x%08x\n", evt->tx.spi);
 		state->peer_ip = state->cathedral_ip;
 		state->peer_port = state->cathedral_port;
+		state->state = CONFESSIONS_STATE_PENDING;
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
+		if (state->state != CONFESSIONS_STATE_ONLINE) {
+			printf("[peer]: ignoring p2p discovery for now\n");
+			break;
+		}
+
 		in.s_addr = evt->peer.ip;
 		if (state->peer_ip != evt->peer.ip ||
 		    state->peer_port != evt->peer.port) {

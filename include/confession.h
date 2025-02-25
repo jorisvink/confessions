@@ -99,6 +99,9 @@ struct confessions_ring {
 	volatile uintptr_t		data[CONFESSIONS_RING_MAX];
 };
 
+#define CONFESSIONS_STATE_PENDING	1
+#define CONFESSIONS_STATE_ONLINE	2
+
 /*
  * The confessions state.
  */
@@ -106,6 +109,7 @@ struct state {
 	int				fd;
 	int				mode;
 	int				debug;
+	int				state;
 	const char			*secret;
 
 	KYRKA				*tunnel;
