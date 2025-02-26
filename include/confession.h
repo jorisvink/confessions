@@ -159,6 +159,7 @@ int	confessions_last_signal(void);
 void	fatal(const char *, ...) __attribute__((noreturn));
 
 /* src/audio.c */
+void	confessions_audio_process(struct state *);
 void	confessions_audio_initialize(struct state *);
 int	confessions_audio_callback(const void *, void *, unsigned long,
 	    const PaStreamCallbackTimeInfo *, PaStreamCallbackFlags, void *);
@@ -166,7 +167,6 @@ int	confessions_audio_callback(const void *, void *, unsigned long,
 /* src/network.c */
 void	confessions_network_input(struct state *);
 void	confessions_network_initialize(struct state *);
-void	confessions_network_recv_packets(struct state *);
 
 /* src/ring.c */
 size_t	confessions_ring_pending(struct confessions_ring *);

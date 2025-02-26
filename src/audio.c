@@ -116,6 +116,38 @@ confessions_audio_callback(const void *input, void *output,
 }
 
 /*
+ * Processing audio packets from capture and feed them into the tunnel.
+ */
+void
+confessions_audio_process(struct state *state)
+{
+	u_int8_t	*ptr;
+	u_int8_t	buf[1024];
+	int		nbytes, idx;
+	opus_int16	opus[CONFESSIONS_SAMPLE_COUNT];
+
+	PRECOND(state != NULL);
+
+	while ((ptr = confessions_ring_dequeue(&state->encrypt)) != NULL) {
+		for (idx = 0; idx < CONFESSIONS_SAMPLE_COUNT; idx++)
+			opus[idx] = ptr[2 * idx + 1] << 8 | ptr[2 * idx];
+
+		confessions_ring_queue(&state->buffers, ptr);
+
+		if ((nbytes = opus_encode(state->encoder,
+		    opus, CONFESSIONS_SAMPLE_COUNT, buf, sizeof(buf))) < 0) {
+			printf("opus_encode: %d\n", nbytes);
+			break;
+		}
+
+		if (kyrka_heaven_input(state->tunnel, buf, nbytes) == -1 &&
+		    kyrka_last_error(state->tunnel) != KYRKA_ERROR_NO_TX_KEY) {
+			fatal("heaven input failed");
+		}
+	}
+}
+
+/*
  * Initialize the OPUS codec state.
  */
 static void

@@ -346,7 +346,7 @@ confessions_run(struct state *state)
 		if (pfd.revents & POLLIN)
 			confessions_network_input(state);
 
-		confessions_network_recv_packets(state);
+		confessions_audio_process(state);
 	}
 }
 

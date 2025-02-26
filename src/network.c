@@ -57,38 +57,6 @@ confessions_network_initialize(struct state *state)
 }
 
 /*
- * Process packets that are queued up for encryption.
- */
-void
-confessions_network_recv_packets(struct state *state)
-{
-	u_int8_t	*ptr;
-	u_int8_t	buf[1024];
-	int		nbytes, idx;
-	opus_int16	opus[CONFESSIONS_SAMPLE_COUNT];
-
-	PRECOND(state != NULL);
-
-	while ((ptr = confessions_ring_dequeue(&state->encrypt)) != NULL) {
-		for (idx = 0; idx < CONFESSIONS_SAMPLE_COUNT; idx++)
-			opus[idx] = ptr[2 * idx + 1] << 8 | ptr[2 * idx];
-
-		confessions_ring_queue(&state->buffers, ptr);
-
-		if ((nbytes = opus_encode(state->encoder,
-		    opus, CONFESSIONS_SAMPLE_COUNT, buf, sizeof(buf))) < 0) {
-			printf("opus_encode: %d\n", nbytes);
-			break;
-		}
-
-		if (kyrka_heaven_input(state->tunnel, buf, nbytes) == -1 &&
-		    kyrka_last_error(state->tunnel) != KYRKA_ERROR_NO_TX_KEY) {
-			fatal("heaven input failed");
-		}
-	}
-}
-
-/*
  * Attempt to read up to 32 UDP packets, passing them into libkyrka as we go.
  */
 void
