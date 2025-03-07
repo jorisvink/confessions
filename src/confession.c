@@ -188,12 +188,11 @@ main(int argc, char **argv)
 	confessions_audio_initialize(&state);
 	confessions_buffers_initialize(&state);
 
-	if (state.mode == CONFESSIONS_MODE_LITURGY) {
-		LIST_INIT(&state.tunnels);
+	LIST_INIT(&state.tunnels);
+	if (state.mode == CONFESSIONS_MODE_LITURGY)
 		confessions_liturgy_initialize(&state);
-	} else {
+	else
 		confessions_tunnel_allocate(&state, cathedral);
-	}
 
 	confessions_run(&state);
 
