@@ -15,60 +15,113 @@
  */
 
 #include <sys/types.h>
+#include <sys/socket.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <errno.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <libkyrka/libkyrka.h>
 
 #include "confession.h"
 
+static void	tunnel_socket_read(struct tunnel *);
+static void	tunnel_opus_initialize(struct tunnel *);
 static void	tunnel_event(KYRKA *, union kyrka_event *, void *);
 static void	tunnel_clear_send(const void *, size_t, u_int64_t, void *);
 static void	tunnel_crypto_send(const void *, size_t, u_int64_t, void *);
 static void	tunnel_cathedral_send(const void *, size_t, u_int64_t, void *);
 
 /*
- * Initialize our KYRKA tunnel object, configuring it with either a
- * shared secret or a cathedral configuration.
+ * Allocate and setup the given tunnel context with either the given
+ * cathedral options or a direct shared secret to load.
  */
 void
-confessions_tunnel_initialize(struct state *state,
+confessions_tunnel_allocate(struct state *state,
     struct kyrka_cathedral_cfg *cfg)
 {
+	struct tunnel		*tun;
+
 	PRECOND(state != NULL);
 	/* cfg is optional. */
 
-	state->seq = 0;
+	if ((tun = calloc(1, sizeof(*tun))) == NULL)
+		fatal("failed to calloc new tunnel");
 
-	if ((state->tunnel = kyrka_ctx_alloc(tunnel_event, state)) == NULL)
+	if ((tun->ctx = kyrka_ctx_alloc(tunnel_event, tun)) == NULL)
 		fatal("failed to allocate new KYRKA context");
 
 	if (cfg != NULL) {
-		cfg->udata = state;
+		cfg->udata = tun;
 		cfg->send = tunnel_cathedral_send;
-		if (kyrka_cathedral_config(state->tunnel, cfg) == -1)
+		if (kyrka_cathedral_config(tun->ctx, cfg) == -1)
 			fatal("cathedral config: %d",
-			    kyrka_last_error(state->tunnel));
+			    kyrka_last_error(tun->ctx));
 	} else {
-		if (kyrka_secret_load(state->tunnel, state->secret) == -1)
+		if (kyrka_secret_load(tun->ctx, state->secret) == -1)
 			fatal("kyrka_secret_load: %d",
-			    kyrka_last_error(state->tunnel));
+			    kyrka_last_error(tun->ctx));
 	}
 
-	if (kyrka_heaven_ifc(state->tunnel, tunnel_clear_send, state) == -1)
+	if (kyrka_heaven_ifc(tun->ctx, tunnel_clear_send, tun) == -1)
 		fatal("failed to set heaven interface");
 
-	if (kyrka_purgatory_ifc(state->tunnel, tunnel_crypto_send, state) == -1)
+	if (kyrka_purgatory_ifc(tun->ctx, tunnel_crypto_send, tun) == -1)
 		fatal("failed to set purgatory interface");
 
-	state->last_rx = state->now;
-	state->state = CONFESSIONS_STATE_PENDING;
+	tun->peer_ip = state->cathedral_ip;
+	tun->peer_port = state->cathedral_port;
+
+	tun->seq = 0;
+	tun->mstate = state;
+	tun->last_rx = state->now;
+	tun->state = CONFESSIONS_STATE_PENDING;
+
+	if (cfg != NULL)
+		tun->id = cfg->tunnel;
+
+	tunnel_opus_initialize(tun);
+	confessions_tunnel_socket(state, tun);
+
+	LIST_INSERT_HEAD(&state->tunnels, tun, list);
+}
+
+/*
+ * Cleanup all tunnel resources.
+ */
+void
+confessions_tunnel_cleanup(struct state *state)
+{
+	struct tunnel		*tun;
+
+	PRECOND(state != NULL);
+
+	while ((tun = LIST_FIRST(&state->tunnels)) != NULL)
+		confessions_tunnel_remove(tun);
+}
+
+/*
+ * Remove the given tunnel and cleanup its resources.
+ */
+void
+confessions_tunnel_remove(struct tunnel *tun)
+{
+	PRECOND(tun != NULL);
+
+	LIST_REMOVE(tun, list);
+
+	(void)close(tun->fd);
+	kyrka_ctx_free(tun->ctx);
+	opus_encoder_destroy(tun->encoder);
+	opus_decoder_destroy(tun->decoder);
+
+	free(tun);
 }
 
 /*
@@ -76,58 +129,182 @@ confessions_tunnel_initialize(struct state *state,
  * offer fresh keys or if the peer timed out somehow.
  */
 void
-confessions_tunnel_manage(struct state *state)
+confessions_tunnel_manage(struct state *state, struct tunnel *tun)
 {
 	PRECOND(state != NULL);
+	PRECOND(tun != NULL);
 
-	if (state->mode == CONFESSIONS_MODE_CATHEDRAL &&
-	    state->now >= state->cathedral_notify) {
-		state->cathedral_notify = state->now + 1;
+	if (state->mode != CONFESSIONS_MODE_DIRECT &&
+	    state->now >= tun->cathedral_notify) {
+		tun->cathedral_notify = state->now + 1;
 
-		if (kyrka_cathedral_notify(state->tunnel) == -1)
+		if (kyrka_cathedral_notify(tun->ctx) == -1)
 			fatal("failed to notify cathedral");
 
-		if (kyrka_cathedral_nat_detection(state->tunnel) == -1)
+		if (kyrka_cathedral_nat_detection(tun->ctx) == -1)
 			fatal("failed to send NAT detect");
+		
 	}
 
-	if (state->now >= state->key_refresh) {
-		state->key_send = state->now;
-		state->key_refresh = state->now + 120;
-		if (kyrka_key_generate(state->tunnel) == -1)
+	if (state->now >= tun->key_refresh) {
+		tun->key_send = state->now;
+		tun->key_refresh = state->now + 120;
+
+		if (kyrka_key_generate(tun->ctx) == -1)
 			fatal("failed to generate key offer");
 	}
 
-	if (state->now >= state->key_send) {
-		state->key_send = state->now + 1;
-		if (kyrka_key_offer(state->tunnel) == -1 &&
-		    kyrka_last_error(state->tunnel) != KYRKA_ERROR_NO_SECRET) {
+	if (state->now >= tun->key_send) {
+		tun->key_send = state->now + 1;
+
+		if (kyrka_key_offer(tun->ctx) == -1 &&
+		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_SECRET) {
 			fatal("failed to offer key: %d",
-			    kyrka_last_error(state->tunnel));
+			    kyrka_last_error(tun->ctx));
 		}
 	}
 
-	if (state->last_rx != 0 && (state->now - state->last_rx) >= 30) {
-		state->last_rx = state->now;
-		kyrka_peer_timeout(state->tunnel);
+	if (tun->last_rx != 0 && (state->now - tun->last_rx) >= 30) {
+		tun->last_rx = state->now;
+		kyrka_peer_timeout(tun->ctx);
 	}
 }
 
 /*
- * We received an event from a KYRKA context, look at what it is and
+ * Wait for activity on any of our configured tunnels, up to max 10 ms.
+ */
+void
+confessions_tunnel_wait(struct state *state)
+{
+	int			nfd;
+	struct tunnel		*tun;
+	size_t			idx, peers;
+	struct pollfd		pfd[1 + KYRKA_PEERS_PER_FLOCK];
+
+	PRECOND(state != NULL);
+
+	peers = 0;
+
+	if (state->mode == CONFESSIONS_MODE_LITURGY) {
+		pfd[peers].fd = state->liturgy.fd;
+		pfd[peers].events = POLLIN;
+		peers++;
+	}
+
+	LIST_FOREACH(tun, &state->tunnels, list) {
+		pfd[peers].fd = tun->fd;
+		pfd[peers].events = POLLIN;
+
+		peers++;
+
+		if (peers >= (1 + KYRKA_PEERS_PER_FLOCK))
+			fatal("somehow this didn't make sense");
+	}
+
+	if ((nfd = poll(pfd, peers, 10)) == -1) {
+		if (errno == EINTR)
+			return;
+		fatal("poll: %s", strerror(errno));
+	}
+
+	if (nfd == 0)
+		return;
+
+	for (idx = 0; idx < peers; idx++) {
+		if (!(pfd[idx].revents & POLLIN))
+			continue;
+
+		if (state->mode == CONFESSIONS_MODE_LITURGY && idx == 0) {
+			tun = &state->liturgy;
+		} else {
+			LIST_FOREACH(tun, &state->tunnels, list) {
+				if (tun->fd == pfd[idx].fd)
+					break;
+			}
+		}
+
+		if (tun == NULL)
+			fatal("did not find matching tunnel");
+
+		tunnel_socket_read(tun);
+	}
+}
+
+/*
+ * Initialize a new socket for the tunnel context.
+ */
+void
+confessions_tunnel_socket(struct state *state, struct tunnel *tun)
+{
+	struct sockaddr_in	sin;
+
+	PRECOND(state != NULL);
+	PRECOND(tun != NULL);
+
+	if ((tun->fd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
+		fatal("socket: %s", strerror(errno));
+
+	if (state->mode == CONFESSIONS_MODE_DIRECT) {
+		sin.sin_family = AF_INET;
+		sin.sin_port = state->local_port;
+		sin.sin_addr.s_addr = state->local_ip;
+
+		if (bind(tun->fd,
+		    (const struct sockaddr *)&sin, sizeof(sin)) == -1)
+			fatal("bind: %s", strerror(errno));
+	}
+}
+
+/*
+ * Initialize the OPUS codec state for the given tunnel.
+ */
+static void
+tunnel_opus_initialize(struct tunnel *tun)
+{
+	int	err;
+
+	PRECOND(tun != NULL);
+
+	tun->decoder = opus_decoder_create(CONFESSIONS_SAMPLE_RATE,
+	    CONFESSIONS_CHANNEL_COUNT, &err);
+	if (err != OPUS_OK)
+		fatal("failed to create opus decoder: %d", err);
+
+	tun->encoder = opus_encoder_create(CONFESSIONS_SAMPLE_RATE,
+	    CONFESSIONS_CHANNEL_COUNT, OPUS_APPLICATION_VOIP, &err);
+	if (err != OPUS_OK)
+		fatal("failed to create opus encoder: %d", err);
+
+	err = opus_encoder_ctl(tun->encoder, OPUS_SET_BITRATE(OPUS_AUTO));
+	if (err != OPUS_OK)
+		fatal("failed to set bitrate: %d", err);
+
+	err = opus_encoder_ctl(tun->encoder, OPUS_SET_INBAND_FEC(1));
+	if (err != OPUS_OK)
+		fatal("failed to enable FEC: %d", err);
+
+	err = opus_encoder_ctl(tun->encoder, OPUS_SET_PACKET_LOSS_PERC(5));
+	if (err != OPUS_OK)
+		fatal("failed to set expected packet loss");
+}
+
+/*
+ * We received an event from a tunnel context, look at what it is and
  * act upon the event if needed.
  */
 static void
 tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 {
 	struct in_addr		in;
+	struct tunnel		*tun;
 	struct state		*state;
 
 	PRECOND(ctx != NULL);
 	PRECOND(evt != NULL);
 	PRECOND(udata != NULL);
 
-	state = udata;
+	tun = udata;
+	state = tun->mstate;
 
 	switch (evt->type) {
 	case KYRKA_EVENT_TX_ACTIVE:
@@ -135,56 +312,95 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		 * A bit of an oxymoron maybe, but when we get an TX active
 		 * event it means we received a key offer from the peer.
 		 */
-		state->last_rx = state->now;
-		printf("[peer]: online - 0x%08x\n", evt->tx.spi);
+		tun->last_rx = state->now;
+		printf("[%p] [peer]: online - 0x%08x\n", udata, evt->tx.spi);
 
-		if (state->peer_id != 0 && state->peer_id != evt->tx.id) {
-			printf("[peer]: restarted, offering new key\n");
-			if (kyrka_key_generate(ctx) == -1) {
+		if (tun->peer_id != 0 && tun->peer_id != evt->tx.id) {
+			printf("[%p] [peer]: restarted, offering new key\n",
+			    udata);
+			if (kyrka_key_generate(tun->ctx) == -1) {
 				fatal("kyrka_key_generate: %d",
-				    kyrka_last_error(ctx));
+				    kyrka_last_error(tun->ctx));
 			}
 		}
 
-		state->peer_id = evt->tx.id;
-		state->state = CONFESSIONS_STATE_ONLINE;
+		tun->peer_id = evt->tx.id;
+		tun->state = CONFESSIONS_STATE_ONLINE;
 		break;
 	case KYRKA_EVENT_RX_ACTIVE:
-		if (state->debug)
-			printf("RX SA active 0x%08x\n", evt->rx.spi);
+		if (state->debug) {
+			printf("[%p] RX SA active 0x%08x\n",
+			    udata, evt->rx.spi);
+		}
 		break;
 	case KYRKA_EVENT_TX_EXPIRED:
-		printf("[peer]: key expired - 0x%08x\n", evt->tx.spi);
+		printf("[%p] [peer]: key expired - 0x%08x\n",
+		    udata, evt->tx.spi);
 		break;
 	case KYRKA_EVENT_TX_ERASED:
-		printf("[peer]: inactivity detected - 0x%08x\n", evt->tx.spi);
-		state->peer_ip = state->cathedral_ip;
-		state->peer_port = state->cathedral_port;
-		state->state = CONFESSIONS_STATE_PENDING;
+		printf("[%p] [peer]: inactivity detected - 0x%08x\n",
+		    udata, evt->tx.spi);
+		tun->peer_ip = state->cathedral_ip;
+		tun->peer_port = state->cathedral_port;
+		tun->state = CONFESSIONS_STATE_PENDING;
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
-		if (state->state != CONFESSIONS_STATE_ONLINE) {
-			printf("[peer]: ignoring p2p discovery for now\n");
+		if (tun->state != CONFESSIONS_STATE_ONLINE) {
+			printf("[%p] [peer]: ignoring p2p discovery for now\n",
+			    udata);
 			break;
 		}
 
 		in.s_addr = evt->peer.ip;
-		if (state->peer_ip != evt->peer.ip ||
-		    state->peer_port != evt->peer.port) {
-			state->peer_ip = evt->peer.ip;
-			state->peer_port = evt->peer.port;
+		if (tun->peer_ip != evt->peer.ip ||
+		    tun->peer_port != evt->peer.port) {
+			tun->peer_ip = evt->peer.ip;
+			tun->peer_port = evt->peer.port;
 
-			if (state->peer_ip != state->cathedral_ip &&
-			    state->peer_port != state->cathedral_port) {
-				printf("[peer]: p2p discovery %s:%u\n",
-				    inet_ntoa(in), evt->peer.port);
+			if (tun->peer_ip != state->cathedral_ip &&
+			    tun->peer_port != state->cathedral_port) {
+				printf("[%p] [peer]: p2p discovery %s:%u\n",
+				    udata, inet_ntoa(in), evt->peer.port);
 			}
 		}
 		break;
 	case KYRKA_EVENT_AMBRY_RECEIVED:
-		printf("[ambry]: generation 0x%08x active\n",
-		    evt->ambry.generation);
+		printf("[%p] [ambry]: generation 0x%08x active\n",
+		    udata, evt->ambry.generation);
 		break;
+	}
+}
+
+/*
+ * Attempt to read up to 32 packets on our tunnel socket.
+ */
+static void
+tunnel_socket_read(struct tunnel *tun)
+{
+	int		idx;
+	ssize_t		ret;
+	u_int8_t	pkt[1500];
+
+	PRECOND(tun != NULL);
+
+	for (idx = 0; idx < 32; idx++) {
+		ret = recv(tun->fd, pkt, sizeof(pkt), MSG_DONTWAIT);
+		if (ret == -1) {
+			if (errno != EAGAIN)
+				fatal("recv failed: %s", strerror(errno));
+			break;
+		}
+
+		if (ret == 0)
+			break;
+
+		tun->rx_pkt++;
+		tun->rx_len += ret;
+
+		if (kyrka_purgatory_input(tun->ctx, pkt, ret) == -1) {
+			fatal("purgatory input: %d",
+			    kyrka_last_error(tun->ctx));
+		}
 	}
 }
 
@@ -197,6 +413,7 @@ static void
 tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 {
 	u_int8_t		*ptr;
+	struct tunnel		*tun;
 	struct state		*state;
 	int			idx, samples;
 	opus_int16		pcm[CONFESSIONS_SAMPLE_COUNT];
@@ -204,19 +421,21 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	PRECOND(data != NULL);
 	PRECOND(udata != NULL);
 
-	state = udata;
-	state->last_rx = state->now;
+	tun = udata;
+	state = tun->mstate;
 
-	if (seq != state->seq + 1) {
+	tun->last_rx = state->now;
+
+	if (seq != tun->seq + 1) {
 		if (state->debug)
 			printf("[net]: packet loss detected\n");
-		if ((samples = opus_decode(state->decoder,
+		if ((samples = opus_decode(tun->decoder,
 		    NULL, 0, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
 			printf("[net]: opus_decode: %d\n", samples);
 			return;
 		}
 	} else {
-		if ((samples = opus_decode(state->decoder,
+		if ((samples = opus_decode(tun->decoder,
 		    data, len, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
 			printf("[net]: opus_decode: %d\n", samples);
 			return;
@@ -228,7 +447,7 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 		return;
 	}
 
-	state->seq = seq;
+	tun->seq = seq;
 
 	for (idx = 0; idx < samples; idx++) {
 		ptr[2 * idx] = pcm[idx] & 0xff;
@@ -246,23 +465,26 @@ static void
 tunnel_crypto_send(const void *data, size_t len, u_int64_t seq, void *udata)
 {
 	struct sockaddr_in	sin;
-	struct state		*state;
+	struct tunnel		*tun;
 
 	PRECOND(data != NULL);
 	PRECOND(udata != NULL);
 
-	state = udata;
+	tun = udata;
 
 	sin.sin_family = AF_INET;
-	sin.sin_port = state->peer_port;
-	sin.sin_addr.s_addr = state->peer_ip;
+	sin.sin_port = tun->peer_port;
+	sin.sin_addr.s_addr = tun->peer_ip;
 
-	if (sendto(state->fd,
+	printf("sending to %s:%u\n", inet_ntoa(sin.sin_addr),
+	    ntohs(sin.sin_port));
+
+	if (sendto(tun->fd,
 	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("sendto: %s", strerror(errno));
 
-	state->tx_pkt++;
-	state->tx_len += len;
+	tun->tx_pkt++;
+	tun->tx_len += len;
 }
 
 /*
@@ -274,15 +496,16 @@ tunnel_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
 {
 	struct sockaddr_in	sin;
 	u_int16_t		port;
+	struct tunnel		*tun;
 	struct state		*state;
 
 	PRECOND(data != NULL);
 	PRECOND(udata != NULL);
 
-	state = udata;
+	tun = udata;
+	state = tun->mstate;
 
 	port = ntohs(state->cathedral_port);
-
 	if (msg == KYRKA_CATHEDRAL_NAT_MAGIC)
 		port++;
 
@@ -290,7 +513,7 @@ tunnel_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = state->cathedral_ip;
 
-	if (sendto(state->fd,
+	if (sendto(tun->fd,
 	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("sendto: %s", strerror(errno));
 }

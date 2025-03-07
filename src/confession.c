@@ -22,7 +22,6 @@
 
 #include <errno.h>
 #include <inttypes.h>
-#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,21 +37,12 @@ static void	usage(void) __attribute__((noreturn));
 static void	signal_hdlr(int);
 static void	signal_memfault(int);
 
-static void	confessions_proc_initialize(char **);
-static void	confessions_proc_name(struct state *,
-		    struct kyrka_cathedral_cfg *);
-
 static void	confessions_signal_trap(int);
 static void	confessions_signal_initialize(void);
 
 static void	confessions_run(struct state *);
 static void	confessions_buffers_initialize(struct state *);
 static void	confessions_split_ip_port(char *, u_int32_t *, u_int16_t *);
-
-/* Used for setting the process titles. */
-extern char		**environ;
-static size_t		proc_title_max = 0;
-static char		**proc_argv = NULL;
 
 /* The last received signal. */
 static volatile sig_atomic_t	sig_recv = -1;
@@ -64,6 +54,7 @@ usage(void)
 	printf("Mode choices:\n");
 	printf("  direct          - Direct tunnel between two peers.\n");
 	printf("  cathedral       - Use a cathedral to do peer discovery.\n");
+	printf("  liturgy         - Use autodiscovery via cathedral.\n");
 	printf("\n");
 	printf("Generic options:\n");
 	printf("  -s <path>       - The shared secret or catehdral secret\n");
@@ -81,6 +72,10 @@ usage(void)
 	printf("to talk too. If you have two devices (01 and 02) and you\n");
 	printf("want to establish a voice channel between these you use\n");
 	printf("tunnel 0x0102 on device 01 and tunnel 0x0201 on device 02.\n");
+	printf("\n");
+	printf("In liturgy mode, the tunnel ID (-t) only contains your\n");
+	printf("tunnel end point, so using the same example as before\n");
+	printf("you specify -t 0x01 in this mode.\n");
 
 	exit(1);
 }
@@ -90,14 +85,11 @@ main(int argc, char **argv)
 {
 	int				ch;
 	struct state			state;
-	struct kyrka_cathedral_cfg	*cathedral, cfg;
+	struct kyrka_cathedral_cfg	*cathedral;
 
 	if (argc < 3)
 		usage();
 
-	confessions_proc_initialize(argv);
-
-	memset(&cfg, 0, sizeof(cfg));
 	memset(&state, 0, sizeof(state));
 
 	optind = 2;
@@ -107,8 +99,11 @@ main(int argc, char **argv)
 	if (!strcmp(argv[1], "direct")) {
 		state.mode = CONFESSIONS_MODE_DIRECT;
 	} else if (!strcmp(argv[1], "cathedral")) {
-		cathedral = &cfg;
+		cathedral = &state.cathedral;
 		state.mode = CONFESSIONS_MODE_CATHEDRAL;
+	} else if (!strcmp(argv[1], "liturgy")) {
+		cathedral = &state.cathedral;
+		state.mode = CONFESSIONS_MODE_LITURGY;
 	} else {
 		fatal("unknown mode '%s'", argv[1]);
 	}
@@ -123,32 +118,32 @@ main(int argc, char **argv)
 			state.debug = 1;
 			break;
 		case 'f':
-			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
-				fatal("-f is only for cathedral mode");
-			if (sscanf(optarg, "%" PRIx64, &cfg.flock) != 1)
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-f is only for cathedral/liturgy mode");
+			if (sscanf(optarg, "%" PRIx64, &cathedral->flock) != 1)
 				fatal("failed to parse flock '%s'", optarg);
 			break;
 		case 'i':
-			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
-				fatal("-i is only for cathedral mode");
-			if (sscanf(optarg, "%x", &cfg.identity) != 1)
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-i is only for cathedral/liturgy mode");
+			if (sscanf(optarg, "%x", &cathedral->identity) != 1)
 				fatal("failed to parse identity '%s'", optarg);
 			break;
 		case 'k':
-			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
-				fatal("-k is only for cathedral mode");
-			cfg.kek = optarg;
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-i is only for cathedral/liturgy mode");
+			cathedral->kek = optarg;
 			break;
 		case 's':
-			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
 				state.secret = optarg;
 			else
-				cfg.secret = optarg;
+				cathedral->secret = optarg;
 			break;
 		case 't':
-			if (state.mode != CONFESSIONS_MODE_CATHEDRAL)
-				fatal("-t is only for cathedral mode");
-			if (sscanf(optarg, "%hx", &cfg.tunnel) != 1)
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-t is only for cathedral/liturgy mode");
+			if (sscanf(optarg, "%hx", &cathedral->tunnel) != 1)
 				fatal("failed to parse tunnel '%s'", optarg);
 			break;
 		default:
@@ -169,16 +164,17 @@ main(int argc, char **argv)
 		if (state.local_ip == 0 && state.local_port == 0)
 			fatal("no local ip (-b) specified");
 		break;
+	case CONFESSIONS_MODE_LITURGY:
 	case CONFESSIONS_MODE_CATHEDRAL:
-		if (cfg.secret == NULL)
+		if (cathedral->secret == NULL)
 			fatal("no secret (-s) specified");
-		if (cfg.flock == 0)
+		if (cathedral->flock == 0)
 			fatal("no flock (-f) specified");
-		if (cfg.identity == 0)
+		if (cathedral->identity == 0)
 			fatal("no identity (-i) specified");
-		if (cfg.kek == NULL)
+		if (cathedral->kek == NULL)
 			fatal("no KEK (-k) specified");
-		if (cfg.tunnel == 0)
+		if (cathedral->tunnel == 0)
 			fatal("no tunnel (-t) specified");
 		break;
 	default:
@@ -187,24 +183,25 @@ main(int argc, char **argv)
 
 	confessions_signal_initialize();
 
-	confessions_split_ip_port(argv[0], &state.peer_ip, &state.peer_port);
+	confessions_split_ip_port(argv[0],
+	    &state.cathedral_ip, &state.cathedral_port);
 	confessions_audio_initialize(&state);
 	confessions_buffers_initialize(&state);
-	confessions_tunnel_initialize(&state, cathedral);
-	confessions_network_initialize(&state);
 
-	confessions_proc_name(&state, cathedral);
+	if (state.mode == CONFESSIONS_MODE_LITURGY) {
+		LIST_INIT(&state.tunnels);
+		confessions_liturgy_initialize(&state);
+	} else {
+		confessions_tunnel_allocate(&state, cathedral);
+	}
+
 	confessions_run(&state);
 
 	printf("shutting down\n");
+
 	free(state.data);
+	confessions_tunnel_cleanup(&state);
 
-	(void)close(state.fd);
-
-	opus_encoder_destroy(state.encoder);
-	opus_decoder_destroy(state.decoder);
-
-	kyrka_ctx_free(state.tunnel);
 	Pa_CloseStream(state.stream);
 	Pa_Terminate();
 
@@ -297,7 +294,7 @@ static void
 confessions_run(struct state *state)
 {
 	struct timespec		ts;
-	struct pollfd		pfd;
+	struct tunnel		*tun;
 	time_t			stats;
 	int			running;
 
@@ -305,9 +302,6 @@ confessions_run(struct state *state)
 
 	stats = 0;
 	running = 1;
-
-	pfd.fd = state->fd;
-	pfd.events = POLLIN;
 
 	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 	state->now = ts.tv_sec;
@@ -325,27 +319,28 @@ confessions_run(struct state *state)
 		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 		state->now = ts.tv_sec;
 
-		if (state->debug && (state->now - stats) >= 1) {
-			stats = state->now;
+		LIST_FOREACH(tun, &state->tunnels, list) {
+			if (state->debug && (state->now - stats) >= 1) {
+				stats = state->now;
 
-			printf("[stats]: rx[%zu, %zu] tx[%zu, %zu]\n",
-			    state->rx_pkt, state->rx_len,
-			    state->tx_pkt, state->tx_len);
+				printf("[%p]: rx[%zu, %zu] tx[%zu, %zu]\n",
+				    (void *)tun,
+				    tun->rx_pkt, tun->rx_len,
+				    tun->tx_pkt, tun->tx_len);
 
-			state->tx_len = 0;
-			state->rx_len = 0;
-			state->tx_pkt = 0;
-			state->rx_pkt = 0;
+				tun->tx_len = 0;
+				tun->rx_len = 0;
+				tun->tx_pkt = 0;
+				tun->rx_pkt = 0;
+			}
+
+			confessions_tunnel_manage(state, tun);
 		}
 
-		confessions_tunnel_manage(state);
+		if (state->mode == CONFESSIONS_MODE_LITURGY)
+			confessions_liturgy_manage(state);
 
-		if (poll(&pfd, 1, 10) == -1 && errno != EINTR)
-			fatal("poll: %s", strerror(errno));
-
-		if (pfd.revents & POLLIN)
-			confessions_network_input(state);
-
+		confessions_tunnel_wait(state);
 		confessions_audio_process(state);
 	}
 }
@@ -397,61 +392,6 @@ confessions_signal_trap(int sig)
 
 	if (sigaction(sig, &sa, NULL) == -1)
 		fatal("sigaction: %s", strerror(errno));
-}
-
-/*
- * Prepare for modifying the proctitle.
- */
-static void
-confessions_proc_initialize(char **argv)
-{
-	int		i;
-	char		*p;
-
-	PRECOND(argv != NULL);
-
-	proc_argv = argv;
-	proc_title_max = 0;
-
-	for (i = 0; environ[i] != NULL; i++) {
-		if ((p = strdup(environ[i])) == NULL)
-			fatal("strdup");
-		proc_title_max += strlen(environ[i]) + 1;
-		environ[i] = p;
-	}
-
-	for (i = 0; proc_argv[i] != NULL; i++)
-		proc_title_max += strlen(proc_argv[i]) + 1;
-}
-
-/*
- * Sets the process title to the given string.
- */
-static void
-confessions_proc_name(struct state *state, struct kyrka_cathedral_cfg *cfg)
-{
-	struct in_addr		in;
-	int			len;
-
-	PRECOND(state != NULL);
-	PRECOND((state->mode == CONFESSIONS_MODE_DIRECT && cfg == NULL) ||
-	    (state->mode == CONFESSIONS_MODE_CATHEDRAL && cfg != NULL));
-
-	proc_argv[1] = NULL;
-
-	if (state->mode == CONFESSIONS_MODE_DIRECT) {
-		in.s_addr = state->peer_ip;
-		len = snprintf(proc_argv[0], proc_title_max,
-		    "confessions [%s:%u]", inet_ntoa(in), state->peer_port);
-	} else {
-		len = snprintf(proc_argv[0],
-		    proc_title_max, "confessions [0x%04x]", cfg->tunnel);
-	}
-
-	if (len == -1 || (size_t)len >= proc_title_max)
-		fatal("failed to set proc title");
-
-	memset(proc_argv[0] + len, 0, proc_title_max - len);
 }
 
 /*

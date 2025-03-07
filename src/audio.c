@@ -21,8 +21,6 @@
 
 #include "confession.h"
 
-static void	audio_opus_initialize(struct state *);
-
 /*
  * Initialize portaudio by opening the default devices in full-duplex mode
  * getting both capture and playback.
@@ -46,8 +44,6 @@ confessions_audio_initialize(struct state *state)
 
 	if ((err = Pa_StartStream(state->stream)) != paNoError)
 		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
-
-	audio_opus_initialize(state);
 }
 
 /*
@@ -116,15 +112,16 @@ confessions_audio_callback(const void *input, void *output,
 }
 
 /*
- * Processing audio packets from capture and feed them into the tunnel.
+ * Processing audio packets from capture and feed them into all tunnels.
  */
 void
 confessions_audio_process(struct state *state)
 {
-	u_int8_t	*ptr;
-	u_int8_t	buf[1024];
-	int		nbytes, idx;
-	opus_int16	opus[CONFESSIONS_SAMPLE_COUNT];
+	u_int8_t		*ptr;
+	struct tunnel		*tun;
+	u_int8_t		buf[1024];
+	int			nbytes, idx;
+	opus_int16		opus[CONFESSIONS_SAMPLE_COUNT];
 
 	PRECOND(state != NULL);
 
@@ -134,48 +131,19 @@ confessions_audio_process(struct state *state)
 
 		confessions_ring_queue(&state->buffers, ptr);
 
-		if ((nbytes = opus_encode(state->encoder,
-		    opus, CONFESSIONS_SAMPLE_COUNT, buf, sizeof(buf))) < 0) {
-			printf("opus_encode: %d\n", nbytes);
-			break;
-		}
+		LIST_FOREACH(tun, &state->tunnels, list) {
+			if ((nbytes = opus_encode(tun->encoder, opus,
+			    CONFESSIONS_SAMPLE_COUNT, buf, sizeof(buf))) < 0) {
+				printf("opus_encode: %d\n", nbytes);
+				continue;
+			}
 
-		if (kyrka_heaven_input(state->tunnel, buf, nbytes) == -1 &&
-		    kyrka_last_error(state->tunnel) != KYRKA_ERROR_NO_TX_KEY) {
-			fatal("heaven input failed");
+			if (kyrka_heaven_input(tun->ctx, buf, nbytes) == -1) {
+				if (kyrka_last_error(tun->ctx) !=
+				    KYRKA_ERROR_NO_TX_KEY) {
+					fatal("heaven input failed");
+				}
+			}
 		}
 	}
-}
-
-/*
- * Initialize the OPUS codec state.
- */
-static void
-audio_opus_initialize(struct state *state)
-{
-	int	err;
-
-	PRECOND(state != NULL);
-
-	state->decoder = opus_decoder_create(CONFESSIONS_SAMPLE_RATE,
-	    CONFESSIONS_CHANNEL_COUNT, &err);
-	if (err != OPUS_OK)
-		fatal("failed to create opus decoder: %d", err);
-
-	state->encoder = opus_encoder_create(CONFESSIONS_SAMPLE_RATE,
-	    CONFESSIONS_CHANNEL_COUNT, OPUS_APPLICATION_VOIP, &err);
-	if (err != OPUS_OK)
-		fatal("failed to create opus encoder: %d", err);
-
-	err = opus_encoder_ctl(state->encoder, OPUS_SET_BITRATE(OPUS_AUTO));
-	if (err != OPUS_OK)
-		fatal("failed to set bitrate: %d", err);
-
-	err = opus_encoder_ctl(state->encoder, OPUS_SET_INBAND_FEC(1));
-	if (err != OPUS_OK)
-		fatal("failed to enable FEC: %d", err);
-
-	err = opus_encoder_ctl(state->encoder, OPUS_SET_PACKET_LOSS_PERC(5));
-	if (err != OPUS_OK)
-		fatal("failed to set expected packet loss");
 }

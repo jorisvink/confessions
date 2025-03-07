@@ -18,6 +18,7 @@
 #define __H_CONFESSION_H
 
 #include <sys/types.h>
+#include <sys/queue.h>
 
 #include <opus.h>
 #include <portaudio.h>
@@ -63,9 +64,10 @@
 #define confessions_atomic_cas_simple(x, e, d)	\
     __sync_bool_compare_and_swap(x, e, d)
 
-/* If we're in cathedral or direct mode. */
+/* If we're in cathedral, direct or liturgy mode. */
 #define CONFESSIONS_MODE_DIRECT		1
 #define CONFESSIONS_MODE_CATHEDRAL	2
+#define CONFESSIONS_MODE_LITURGY	3
 
 /* Audio settings. */
 #define CONFESSIONS_CHANNEL_COUNT	1
@@ -103,44 +105,75 @@ struct confessions_ring {
 #define CONFESSIONS_STATE_ONLINE	2
 
 /*
- * The confessions state.
+ * An active tunnel object.
+ */
+struct tunnel {
+	int			fd;
+	u_int16_t		id;
+	KYRKA			*ctx;
+	int			state;
+
+	u_int64_t		seq;
+	size_t			tx_pkt;
+	size_t			tx_len;
+	size_t			rx_pkt;
+	size_t			rx_len;
+
+	OpusEncoder		*encoder;
+	OpusDecoder		*decoder;
+
+	time_t			last_rx;
+	time_t			key_send;
+	time_t			key_refresh;
+	time_t			cathedral_notify;
+
+	u_int64_t		peer_id;
+	u_int32_t		peer_ip;
+	u_int16_t		peer_port;
+
+	struct state		*mstate;
+
+	LIST_ENTRY(tunnel)	list;
+};
+
+/*
+ * The confessions main state.
  */
 struct state {
-	int				fd;
+	/* Misc stuff. */
 	int				mode;
 	int				debug;
-	int				state;
+
+	/* Path to secret. */
 	const char			*secret;
 
-	KYRKA				*tunnel;
+	/* The explicit liturgy tunnel. */
+	struct tunnel			liturgy;
+
+	/* For liturgy, the peers last state. */
+	u_int8_t			peers[KYRKA_PEERS_PER_FLOCK];
+
+	/* All tunnels that we are handling (except liturgy). */
+	LIST_HEAD(, tunnel)		tunnels;
+
+	/* The capture and playback audio stream. */
 	PaStream			*stream;
-	OpusEncoder			*encoder;
-	OpusDecoder			*decoder;
 
+	/* Current time. */
 	time_t				now;
-	time_t				last_rx;
-	time_t				key_send;
-	time_t				key_refresh;
-	time_t				cathedral_notify;
 
-	u_int64_t			seq;
-	size_t				tx_pkt;
-	size_t				tx_len;
-	size_t				rx_pkt;
-	size_t				rx_len;
-
-	u_int64_t			peer_id;
-	u_int32_t			peer_ip;
-	u_int16_t			peer_port;
-
+	/* Our local ip address and bound port. */
 	u_int32_t			local_ip;
 	u_int16_t			local_port;
 
+	/* The cathedral its configured ip address and port. */
 	u_int32_t			cathedral_ip;
 	u_int16_t			cathedral_port;
 
-	size_t				samples_rx;
+	/* The cathedral configuration. */
+	struct kyrka_cathedral_cfg	cathedral;
 
+	/* The shared capture/playback audio buffers. */
 	u_int8_t			*data;
 
 	struct confessions_ring		buffers;
@@ -164,9 +197,9 @@ void	confessions_audio_initialize(struct state *);
 int	confessions_audio_callback(const void *, void *, unsigned long,
 	    const PaStreamCallbackTimeInfo *, PaStreamCallbackFlags, void *);
 
-/* src/network.c */
-void	confessions_network_input(struct state *);
-void	confessions_network_initialize(struct state *);
+/* src/liturgy.c */
+void	confessions_liturgy_manage(struct state *);
+void	confessions_liturgy_initialize(struct state *);
 
 /* src/ring.c */
 size_t	confessions_ring_pending(struct confessions_ring *);
@@ -176,8 +209,12 @@ void	confessions_ring_init(struct confessions_ring *, size_t);
 int	confessions_ring_queue(struct confessions_ring *, void *);
 
 /* src/tunnel.c */
-void	confessions_tunnel_manage(struct state *);
-void	confessions_tunnel_initialize(struct state *,
+void	confessions_tunnel_wait(struct state *);
+void	confessions_tunnel_remove(struct tunnel *);
+void	confessions_tunnel_cleanup(struct state *);
+void	confessions_tunnel_manage(struct state *, struct tunnel *);
+void	confessions_tunnel_socket(struct state *, struct tunnel *);
+void	confessions_tunnel_allocate(struct state *,
 	    struct kyrka_cathedral_cfg *);
 
 #endif

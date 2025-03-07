@@ -17,7 +17,7 @@ CFLAGS+=-g
 
 SRC=	src/confession.c \
 	src/audio.c \
-	src/network.c \
+	src/liturgy.c \
 	src/ring.c \
 	src/tunnel.c
 
