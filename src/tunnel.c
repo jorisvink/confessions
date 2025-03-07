@@ -143,7 +143,6 @@ confessions_tunnel_manage(struct state *state, struct tunnel *tun)
 
 		if (kyrka_cathedral_nat_detection(tun->ctx) == -1)
 			fatal("failed to send NAT detect");
-		
 	}
 
 	if (state->now >= tun->key_refresh) {
@@ -429,12 +428,15 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	if (seq != tun->seq + 1) {
 		if (state->debug)
 			printf("[net]: packet loss detected\n");
+
+		tun->seq = seq;
 		if ((samples = opus_decode(tun->decoder,
 		    NULL, 0, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
 			printf("[net]: opus_decode: %d\n", samples);
 			return;
 		}
 	} else {
+		tun->seq = seq;
 		if ((samples = opus_decode(tun->decoder,
 		    data, len, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
 			printf("[net]: opus_decode: %d\n", samples);
@@ -446,8 +448,6 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 		printf("[net]: out of buffers\n");
 		return;
 	}
-
-	tun->seq = seq;
 
 	for (idx = 0; idx < samples; idx++) {
 		ptr[2 * idx] = pcm[idx] & 0xff;
@@ -475,9 +475,6 @@ tunnel_crypto_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	sin.sin_family = AF_INET;
 	sin.sin_port = tun->peer_port;
 	sin.sin_addr.s_addr = tun->peer_ip;
-
-	printf("sending to %s:%u\n", inet_ntoa(sin.sin_addr),
-	    ntohs(sin.sin_port));
 
 	if (sendto(tun->fd,
 	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
