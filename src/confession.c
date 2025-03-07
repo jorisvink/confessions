@@ -91,6 +91,7 @@ main(int argc, char **argv)
 		usage();
 
 	memset(&state, 0, sizeof(state));
+	LIST_INIT(&state.tunnels);
 
 	optind = 2;
 	cathedral = NULL;
@@ -188,14 +189,12 @@ main(int argc, char **argv)
 	confessions_audio_initialize(&state);
 	confessions_buffers_initialize(&state);
 
-	LIST_INIT(&state.tunnels);
 	if (state.mode == CONFESSIONS_MODE_LITURGY)
 		confessions_liturgy_initialize(&state);
 	else
 		confessions_tunnel_allocate(&state, cathedral);
 
 	confessions_run(&state);
-
 	printf("shutting down\n");
 
 	free(state.data);
