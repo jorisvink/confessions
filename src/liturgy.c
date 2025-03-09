@@ -104,7 +104,7 @@ liturgy_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		if (state->peers[idx] == 0 && evt->liturgy.peers[idx] == 1) {
 			memcpy(&cfg, &state->cathedral, sizeof(cfg));
 			cfg.tunnel = (cfg.tunnel << 8) | idx;
-			confessions_tunnel_allocate(state, &cfg);
+			confessions_tunnel_alloc(state, &cfg);
 			state->peers[idx] = 1;
 		}
 

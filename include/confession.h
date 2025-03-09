@@ -108,29 +108,43 @@ struct confessions_ring {
  * An active tunnel object.
  */
 struct tunnel {
+	/* Misc stuff. */
 	int			fd;
 	u_int16_t		id;
 	KYRKA			*ctx;
 	int			state;
 
+	/* Incoming sequence number and statistics. */
 	u_int64_t		seq;
 	size_t			tx_pkt;
 	size_t			tx_len;
 	size_t			rx_pkt;
 	size_t			rx_len;
 
+	/* The playback audio stream. */
+	PaStream		*stream;
+
+	/* Queue for playback of this peer its audio. */
+	struct confessions_ring	playback;
+	u_int8_t		*rx_buf;
+	size_t			rx_offset;
+
+	/* Tunnel specific opus encoder and decoder. */
 	OpusEncoder		*encoder;
 	OpusDecoder		*decoder;
 
+	/* Timers for specific things that should trigger. */
 	time_t			last_rx;
 	time_t			key_send;
 	time_t			key_refresh;
 	time_t			cathedral_notify;
 
+	/* Our peer ip:port and its id. */
 	u_int64_t		peer_id;
 	u_int32_t		peer_ip;
 	u_int16_t		peer_port;
 
+	/* Pointer to state. */
 	struct state		*mstate;
 
 	LIST_ENTRY(tunnel)	list;
@@ -156,9 +170,6 @@ struct state {
 	/* All tunnels that we are handling (except liturgy). */
 	LIST_HEAD(, tunnel)		tunnels;
 
-	/* The capture and playback audio stream. */
-	PaStream			*stream;
-
 	/* Current time. */
 	time_t				now;
 
@@ -173,18 +184,17 @@ struct state {
 	/* The cathedral configuration. */
 	struct kyrka_cathedral_cfg	cathedral;
 
+	/* The capture audio stream. */
+	PaStream			*stream;
+
 	/* The shared capture/playback audio buffers. */
 	u_int8_t			*data;
 
 	struct confessions_ring		buffers;
 	struct confessions_ring		encrypt;
-	struct confessions_ring		playback;
 
 	u_int8_t			*tx_buf;
 	size_t				tx_offset;
-
-	u_int8_t			*rx_buf;
-	size_t				rx_offset;
 };
 
 /* src/kyrka.c */
@@ -192,10 +202,9 @@ int	confessions_last_signal(void);
 void	fatal(const char *, ...) __attribute__((noreturn));
 
 /* src/audio.c */
+void	confessions_audio_init(struct state *);
 void	confessions_audio_process(struct state *);
-void	confessions_audio_initialize(struct state *);
-int	confessions_audio_callback(const void *, void *, unsigned long,
-	    const PaStreamCallbackTimeInfo *, PaStreamCallbackFlags, void *);
+void	confessions_audio_playback(struct tunnel *);
 
 /* src/liturgy.c */
 void	confessions_liturgy_manage(struct state *);
@@ -214,7 +223,8 @@ void	confessions_tunnel_remove(struct tunnel *);
 void	confessions_tunnel_cleanup(struct state *);
 void	confessions_tunnel_manage(struct state *, struct tunnel *);
 void	confessions_tunnel_socket(struct state *, struct tunnel *);
-void	confessions_tunnel_allocate(struct state *,
-	    struct kyrka_cathedral_cfg *);
+void	confessions_tunnel_alloc(struct state *, struct kyrka_cathedral_cfg *);
+
+u_int64_t	confessions_ms(void);
 
 #endif

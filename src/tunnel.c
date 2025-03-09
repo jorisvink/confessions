@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include <libkyrka/libkyrka.h>
@@ -43,8 +44,7 @@ static void	tunnel_cathedral_send(const void *, size_t, u_int64_t, void *);
  * cathedral options or a direct shared secret to load.
  */
 void
-confessions_tunnel_allocate(struct state *state,
-    struct kyrka_cathedral_cfg *cfg)
+confessions_tunnel_alloc(struct state *state, struct kyrka_cathedral_cfg *cfg)
 {
 	struct tunnel		*tun;
 
@@ -87,6 +87,7 @@ confessions_tunnel_allocate(struct state *state,
 		tun->id = cfg->tunnel;
 
 	tunnel_opus_initialize(tun);
+	confessions_audio_playback(tun);
 	confessions_tunnel_socket(state, tun);
 
 	LIST_INSERT_HEAD(&state->tunnels, tun, list);
@@ -118,6 +119,8 @@ confessions_tunnel_remove(struct tunnel *tun)
 
 	(void)close(tun->fd);
 	kyrka_ctx_free(tun->ctx);
+
+	Pa_CloseStream(tun->stream);
 	opus_encoder_destroy(tun->encoder);
 	opus_decoder_destroy(tun->decoder);
 
@@ -193,7 +196,6 @@ confessions_tunnel_wait(struct state *state)
 	LIST_FOREACH(tun, &state->tunnels, list) {
 		pfd[peers].fd = tun->fd;
 		pfd[peers].events = POLLIN;
-
 		peers++;
 
 		if (peers >= (1 + KYRKA_PEERS_PER_FLOCK))
@@ -209,23 +211,17 @@ confessions_tunnel_wait(struct state *state)
 	if (nfd == 0)
 		return;
 
-	for (idx = 0; idx < peers; idx++) {
-		if (!(pfd[idx].revents & POLLIN))
-			continue;
+	if (state->mode == CONFESSIONS_MODE_LITURGY) {
+		if (pfd[0].revents & POLLIN)
+			tunnel_socket_read(&state->liturgy);
+		idx = 1;
+	} else {
+		idx = 0;
+	}
 
-		if (state->mode == CONFESSIONS_MODE_LITURGY && idx == 0) {
-			tun = &state->liturgy;
-		} else {
-			LIST_FOREACH(tun, &state->tunnels, list) {
-				if (tun->fd == pfd[idx].fd)
-					break;
-			}
-		}
-
-		if (tun == NULL)
-			fatal("did not find matching tunnel");
-
-		tunnel_socket_read(tun);
+	LIST_FOREACH(tun, &state->tunnels, list) {
+		if (pfd[idx++].revents & POLLIN)
+			tunnel_socket_read(tun);
 	}
 }
 
@@ -454,7 +450,7 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 		ptr[2 * idx + 1] = (pcm[idx] >> 8) & 0xff;
 	}
 
-	confessions_ring_queue(&state->playback, ptr);
+	confessions_ring_queue(&tun->playback, ptr);
 }
 
 /*

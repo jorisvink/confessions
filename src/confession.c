@@ -183,24 +183,22 @@ main(int argc, char **argv)
 	}
 
 	confessions_signal_initialize();
-
 	confessions_split_ip_port(argv[0],
 	    &state.cathedral_ip, &state.cathedral_port);
-	confessions_audio_initialize(&state);
+
+	confessions_audio_init(&state);
 	confessions_buffers_initialize(&state);
 
 	if (state.mode == CONFESSIONS_MODE_LITURGY)
 		confessions_liturgy_initialize(&state);
 	else
-		confessions_tunnel_allocate(&state, cathedral);
+		confessions_tunnel_alloc(&state, cathedral);
 
 	confessions_run(&state);
 	printf("shutting down\n");
 
-	free(state.data);
 	confessions_tunnel_cleanup(&state);
-
-	Pa_CloseStream(state.stream);
+	free(state.data);
 	Pa_Terminate();
 
 	return (0);
@@ -235,6 +233,16 @@ confessions_last_signal(void)
 	sig_recv = -1;
 
 	return (sig);
+}
+
+u_int64_t
+confessions_ms(void)
+{
+	struct timespec		ts;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	return ((u_int64_t)(ts.tv_sec * 1000 + (ts.tv_nsec / 1000000)));
 }
 
 /*
@@ -276,8 +284,6 @@ confessions_buffers_initialize(struct state *state)
 		fatal("failed to allocate buffer");
 
 	confessions_ring_init(&state->buffers, CONFESSIONS_BUF_COUNT);
-	confessions_ring_init(&state->encrypt, CONFESSIONS_BUF_COUNT);
-	confessions_ring_init(&state->playback, CONFESSIONS_BUF_COUNT);
 
 	for (idx = 0; idx < CONFESSIONS_BUF_COUNT; idx++) {
 		ptr = &state->data[idx * CONFESSIONS_SAMPLE_BYTES];
@@ -317,10 +323,10 @@ confessions_run(struct state *state)
 		(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 		state->now = ts.tv_sec;
 
-		LIST_FOREACH(tun, &state->tunnels, list) {
-			if (state->debug && (state->now - stats) >= 1) {
-				stats = state->now;
+		if (state->debug && (state->now - stats) >= 1) {
+			stats = state->now;
 
+			LIST_FOREACH(tun, &state->tunnels, list) {
 				printf("[%p]: rx[%zu, %zu] tx[%zu, %zu]\n",
 				    (void *)tun,
 				    tun->rx_pkt, tun->rx_len,
@@ -331,12 +337,13 @@ confessions_run(struct state *state)
 				tun->tx_pkt = 0;
 				tun->rx_pkt = 0;
 			}
-
-			confessions_tunnel_manage(state, tun);
 		}
 
 		if (state->mode == CONFESSIONS_MODE_LITURGY)
 			confessions_liturgy_manage(state);
+
+		LIST_FOREACH(tun, &state->tunnels, list)
+			confessions_tunnel_manage(state, tun);
 
 		confessions_tunnel_wait(state);
 		confessions_audio_process(state);

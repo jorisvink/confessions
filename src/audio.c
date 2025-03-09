@@ -21,14 +21,22 @@
 
 #include "confession.h"
 
+static int	audio_capture_callback(const void *, void *,
+		    unsigned long, const PaStreamCallbackTimeInfo *,
+		    PaStreamCallbackFlags, void *);
+static int	audio_playback_callback(const void *, void *,
+		    unsigned long, const PaStreamCallbackTimeInfo *,
+		    PaStreamCallbackFlags, void *);
+
 /*
- * Initialize portaudio by opening the default devices in full-duplex mode
- * getting both capture and playback.
+ * Initialize portaudio for capture so that we can get audio frames
+ * that can be queued up for encryption.
  */
 void
-confessions_audio_initialize(struct state *state)
+confessions_audio_init(struct state *state)
 {
 	PaError			err;
+	PaStreamParameters	params;
 
 	PRECOND(state != NULL);
 	PRECOND(state->stream == NULL);
@@ -36,79 +44,51 @@ confessions_audio_initialize(struct state *state)
 	if ((err = Pa_Initialize()) != paNoError)
 		fatal("Pa_Initialize: %d", err);
 
-	if ((err = Pa_OpenDefaultStream(&state->stream,
-	    CONFESSIONS_CHANNEL_COUNT, CONFESSIONS_CHANNEL_COUNT, paInt16,
-	    CONFESSIONS_SAMPLE_RATE, CONFESSIONS_SAMPLE_COUNT,
-	    confessions_audio_callback, state)) != paNoError)
+	params.suggestedLatency = 0;
+	params.sampleFormat = paInt16;
+	params.hostApiSpecificStreamInfo = NULL;
+	params.device = Pa_GetDefaultInputDevice();
+	params.channelCount = CONFESSIONS_CHANNEL_COUNT;
+
+	if ((err = Pa_OpenStream(&state->stream, &params, NULL,
+	    CONFESSIONS_SAMPLE_RATE, CONFESSIONS_SAMPLE_COUNT, 0,
+	    audio_capture_callback, state)) != paNoError)
 		fatal("Pa_OpenDefaultStream: %s", Pa_GetErrorText(err));
 
 	if ((err = Pa_StartStream(state->stream)) != paNoError)
 		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
+
+	confessions_ring_init(&state->encrypt, CONFESSIONS_BUF_COUNT);
 }
 
 /*
- * The portaudio callback when the library requires data and wants to give
- * us data that we should transport.
+ * Initialize portaudio for the given tunnel object, right now it opens
+ * in full-duplex mode getting both capture and playback.
  */
-int
-confessions_audio_callback(const void *input, void *output,
-    unsigned long frames, const PaStreamCallbackTimeInfo *info,
-    PaStreamCallbackFlags flags, void *udata)
+void
+confessions_audio_playback(struct tunnel *tun)
 {
-	struct state	*state;
-	size_t		samples;
+	PaError			err;
+	PaStreamParameters	params;
 
-	PRECOND(input != NULL);
-	PRECOND(output != NULL);
-	PRECOND(info != NULL);
-	PRECOND(udata != NULL);
+	PRECOND(tun != NULL);
+	PRECOND(tun->stream == NULL);
 
-	state = udata;
-	memset(output, 0, frames * CONFESSIONS_SAMPLE_SIZE);
+	params.suggestedLatency = 0;
+	params.sampleFormat = paInt16;
+	params.hostApiSpecificStreamInfo = NULL;
+	params.device = Pa_GetDefaultOutputDevice();
+	params.channelCount = CONFESSIONS_CHANNEL_COUNT;
 
-	if (state->tx_buf == NULL) {
-		state->tx_offset = 0;
-		state->tx_buf = confessions_ring_dequeue(&state->buffers);
-	}
+	if ((err = Pa_OpenStream(&tun->stream, NULL, &params,
+	    CONFESSIONS_SAMPLE_RATE, CONFESSIONS_SAMPLE_COUNT, 0,
+	    audio_playback_callback, tun)) != paNoError)
+		fatal("Pa_OpenDefaultStream: %s", Pa_GetErrorText(err));
 
-	if (state->tx_buf != NULL) {
-		samples = CONFESSIONS_SAMPLE_COUNT -
-		    (state->tx_offset / CONFESSIONS_SAMPLE_SIZE);
-		if (frames < samples)
-			samples = frames;
+	if ((err = Pa_StartStream(tun->stream)) != paNoError)
+		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
 
-		memcpy(&state->tx_buf[state->tx_offset], input,
-		    samples * CONFESSIONS_SAMPLE_SIZE),
-		state->tx_offset += (samples * CONFESSIONS_SAMPLE_SIZE);
-
-		if (state->tx_offset == CONFESSIONS_SAMPLE_BYTES) {
-			confessions_ring_queue(&state->encrypt, state->tx_buf);
-			state->tx_buf = NULL;
-		}
-	}
-
-	if (state->rx_buf == NULL) {
-		state->rx_offset = 0;
-		state->rx_buf = confessions_ring_dequeue(&state->playback);
-	}
-
-	if (state->rx_buf != NULL) {
-		samples = CONFESSIONS_SAMPLE_COUNT -
-		    (state->rx_offset / CONFESSIONS_SAMPLE_SIZE);
-		if (frames < samples)
-			samples = frames;
-
-		memcpy(output, &state->rx_buf[state->rx_offset],
-		    samples * CONFESSIONS_SAMPLE_SIZE);
-		state->rx_offset += (samples * CONFESSIONS_SAMPLE_SIZE);
-
-		if (state->rx_offset == CONFESSIONS_SAMPLE_BYTES) {
-			confessions_ring_queue(&state->buffers, state->rx_buf);
-			state->rx_buf = NULL;
-		}
-	}
-
-	return (0);
+	confessions_ring_init(&tun->playback, CONFESSIONS_BUF_COUNT);
 }
 
 /*
@@ -146,4 +126,95 @@ confessions_audio_process(struct state *state)
 			}
 		}
 	}
+}
+
+/*
+ * Callback for audio capture, we read frames from the input parameter
+ * and place them into a buffer that is queued up for encryption by
+ * all tunnels.
+ */
+static int
+audio_capture_callback(const void *input, void *output,
+    unsigned long frames, const PaStreamCallbackTimeInfo *info,
+    PaStreamCallbackFlags flags, void *udata)
+{
+	struct state		*state;
+	size_t			samples;
+
+	PRECOND(input != NULL);
+	/* don't care for output. */
+	PRECOND(info != NULL);
+	PRECOND(udata != NULL);
+
+	state = udata;
+
+	if (state->tx_buf == NULL) {
+		state->tx_offset = 0;
+		state->tx_buf = confessions_ring_dequeue(&state->buffers);
+	}
+
+	if (state->tx_buf != NULL) {
+		samples = CONFESSIONS_SAMPLE_COUNT -
+		    (state->tx_offset / CONFESSIONS_SAMPLE_SIZE);
+		if (frames < samples)
+			samples = frames;
+
+		memcpy(&state->tx_buf[state->tx_offset], input,
+		    samples * CONFESSIONS_SAMPLE_SIZE),
+		state->tx_offset += (samples * CONFESSIONS_SAMPLE_SIZE);
+
+		if (state->tx_offset == CONFESSIONS_SAMPLE_BYTES) {
+			confessions_ring_queue(&state->encrypt, state->tx_buf);
+			state->tx_buf = NULL;
+		}
+	}
+
+	return (0);
+}
+
+/*
+ * Callback for audio playback (per-tunnel). We pop a buffer from the
+ * playback queue and write it to the output parameter.
+ */
+static int
+audio_playback_callback(const void *input, void *output,
+    unsigned long frames, const PaStreamCallbackTimeInfo *info,
+    PaStreamCallbackFlags flags, void *udata)
+{
+	struct tunnel		*tun;
+	struct state		*state;
+	size_t			samples;
+
+	/* don't care for input. */
+	PRECOND(output != NULL);
+	PRECOND(info != NULL);
+	PRECOND(udata != NULL);
+
+	tun = udata;
+	state = tun->mstate;
+
+	memset(output, 0, frames * CONFESSIONS_SAMPLE_SIZE);
+
+	if (tun->rx_buf == NULL) {
+		tun->rx_offset = 0;
+		tun->rx_buf = confessions_ring_dequeue(&tun->playback);
+	}
+
+	if (tun->rx_buf != NULL) {
+		samples = CONFESSIONS_SAMPLE_COUNT -
+		    (tun->rx_offset / CONFESSIONS_SAMPLE_SIZE);
+		if (frames < samples)
+			samples = frames;
+
+		memcpy(output, &tun->rx_buf[tun->rx_offset],
+		    samples * CONFESSIONS_SAMPLE_SIZE);
+		tun->rx_offset += (samples * CONFESSIONS_SAMPLE_SIZE);
+
+		if (tun->rx_offset == CONFESSIONS_SAMPLE_BYTES) {
+			confessions_ring_queue(&state->buffers, tun->rx_buf);
+			tun->rx_buf = NULL;
+		}
+	}
+
+	return (0);
 }
