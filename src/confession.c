@@ -68,6 +68,9 @@ usage(void)
 	printf("  -i <identity>   - Hexadecimal client ID\n");
 	printf("  -t <tunnel>     - Hexadecimal tunnel ID\n");
 	printf("\n");
+	printf("Liturgy specific options:\n");
+	printf("  -g <group>      - The liturgy group to join\n");
+	printf("\n");
 	printf("In cathedral mode, the tunnel given specifies who you want\n");
 	printf("to talk too. If you have two devices (01 and 02) and you\n");
 	printf("want to establish a voice channel between these you use\n");
@@ -109,7 +112,7 @@ main(int argc, char **argv)
 		fatal("unknown mode '%s'", argv[1]);
 	}
 
-	while ((ch = getopt(argc, argv, "b:df:i:k:s:t:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:df:g:i:k:s:t:")) != -1) {
 		switch (ch) {
 		case 'b':
 			confessions_split_ip_port(optarg,
@@ -123,6 +126,12 @@ main(int argc, char **argv)
 				fatal("-f is only for cathedral/liturgy mode");
 			if (sscanf(optarg, "%" PRIx64, &cathedral->flock) != 1)
 				fatal("failed to parse flock '%s'", optarg);
+			break;
+		case 'g':
+			if (state.mode != CONFESSIONS_MODE_LITURGY)
+				fatal("-g is only for liturgy mode");
+			if (sscanf(optarg, "%hx", &cathedral->group) != 1)
+				fatal("failed to parse group '%s'", optarg);
 			break;
 		case 'i':
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
