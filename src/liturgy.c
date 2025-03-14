@@ -38,11 +38,16 @@ static void	liturgy_cathedral_send(const void *, size_t, u_int64_t, void *);
 void
 confessions_liturgy_initialize(struct state *state)
 {
+	const char		*kek;
+
 	PRECOND(state != NULL);
 
 	state->liturgy.ctx = kyrka_ctx_alloc(liturgy_event, &state->liturgy);
 	if (state->liturgy.ctx == NULL)
 		fatal("failed to allocate new KYRKA context");
+
+	kek = state->cathedral.kek;
+	state->cathedral.kek = NULL;
 
 	state->cathedral.udata = &state->liturgy;
 	state->cathedral.send = liturgy_cathedral_send;
@@ -53,7 +58,9 @@ confessions_liturgy_initialize(struct state *state)
 		    kyrka_last_error(state->liturgy.ctx));
 	}
 
+	state->cathedral.kek = kek;
 	state->liturgy.mstate = state;
+
 	confessions_tunnel_socket(state, &state->liturgy);
 }
 
