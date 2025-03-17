@@ -22,7 +22,8 @@ $ make
 
 ### Modes
 
-You can use confessions in two modes, **direct** or **cathedral**.
+You can use confessions in three different modes, **direct**, **cathedral**
+or **liturgy** mode.
 
 In the **direct** mode you connect directly to your peer and perform
 key offers under the shared secret, this is much like sanctum its
@@ -31,6 +32,10 @@ tunnel mode.
 In the **cathedral** mode you first connect to a cathedral to discover
 your peer and fallback to peer-to-peer once discovered (and if capable).
 
+In the **liturgy** mode you autodiscover peers in the same group and
+automatically establish e2e tunnels to them, effectively giving you
+a group conversation.
+
 ## Usage
 
 ```
@@ -38,6 +43,7 @@ Usage: confessions [mode] [opts] [ip:port]
 Mode choices:
   direct          - Direct tunnel between two peers.
   cathedral       - Use a cathedral to do peer discovery.
+  liturgy         - Use autodiscovery via cathedral.
 
 Generic options:
   -s <path>       - The shared secret or catehdral secret
@@ -51,8 +57,15 @@ Cathedral specific options:
   -i <identity>   - Hexadecimal client ID
   -t <tunnel>     - Hexadecimal tunnel ID
 
+Liturgy specific options:
+  -g <group>      - The liturgy group to join
+
 In cathedral mode, the tunnel given specifies who you want
 to talk too. If you have two devices (01 and 02) and you
 want to establish a voice channel between these you use
 tunnel 0x0102 on device 01 and tunnel 0x0201 on device 02.
+
+In liturgy mode, the tunnel ID (-t) only contains your
+tunnel end point, so using the same example as before
+you specify -t 0x01 in this mode.
 ```
