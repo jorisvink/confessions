@@ -11,6 +11,7 @@ You need to have the following installed on your system:
 
 - opus
 - portaudio
+- libsodium
 - libkyrka (https://github.com/jorisvink/libkyrka)
 
 Once you have those, building is easy:
