@@ -37,7 +37,7 @@ CFLAGS+=$(shell pkg-config --cflags portaudio-2.0)
 CFLAGS+=$(shell pkg-config --cflags opus)
 
 LDFLAGS+=$(shell pkg-config --libs portaudio-2.0)
-LDFLAGS+=$(shell pkg-config --libs openssl)
+LDFLAGS+=$(shell pkg-config --libs libsodium)
 LDFLAGS+=$(shell pkg-config --libs opus)
 
 OBJS=	$(SRC:src/%.c=$(OBJDIR)/%.o)
