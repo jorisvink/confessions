@@ -340,12 +340,6 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 		tun->state = CONFESSIONS_STATE_PENDING;
 		break;
 	case KYRKA_EVENT_PEER_UPDATE:
-		if (tun->state != CONFESSIONS_STATE_ONLINE) {
-			printf("[%p] [peer]: ignoring p2p discovery for now\n",
-			    udata);
-			break;
-		}
-
 		in.s_addr = evt->peer.ip;
 		if (tun->peer_ip != evt->peer.ip ||
 		    tun->peer_port != evt->peer.port) {
