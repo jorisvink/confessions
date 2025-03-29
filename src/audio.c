@@ -105,6 +105,11 @@ confessions_audio_process(struct state *state)
 
 	PRECOND(state != NULL);
 
+	/*
+	 * The data on the state->encrypt ring consists of
+	 * CONFESSIONS_SAMPLE_BYTES bytes that were gathered
+	 * in the audio_capture_callback() function below.
+	 */
 	while ((ptr = confessions_ring_dequeue(&state->encrypt)) != NULL) {
 		for (idx = 0; idx < CONFESSIONS_SAMPLE_COUNT; idx++)
 			opus[idx] = ptr[2 * idx + 1] << 8 | ptr[2 * idx];
