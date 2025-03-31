@@ -21,6 +21,7 @@
 
 #include "confession.h"
 
+static void	audio_device_info(const char *, int);
 static int	audio_capture_callback(const void *, void *,
 		    unsigned long, const PaStreamCallbackTimeInfo *,
 		    PaStreamCallbackFlags, void *);
@@ -58,6 +59,7 @@ confessions_audio_init(struct state *state)
 	if ((err = Pa_StartStream(state->stream)) != paNoError)
 		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
 
+	audio_device_info("capture", params.device);
 	confessions_ring_init(&state->encrypt, CONFESSIONS_BUF_COUNT);
 }
 
@@ -88,6 +90,7 @@ confessions_audio_playback(struct tunnel *tun)
 	if ((err = Pa_StartStream(tun->stream)) != paNoError)
 		fatal("Pa_StartStream: %s", Pa_GetErrorText(err));
 
+	audio_device_info("playback", params.device);
 	confessions_ring_init(&tun->playback, CONFESSIONS_BUF_COUNT);
 }
 
@@ -222,4 +225,21 @@ audio_playback_callback(const void *input, void *output,
 	}
 
 	return (0);
+}
+
+/*
+ * Dump the audio device information to screen.
+ */
+static void
+audio_device_info(const char *label, int dev)
+{
+	const PaDeviceInfo	*info;
+
+	PRECOND(label != NULL);
+	PRECOND(dev >= 0);
+
+	if ((info = Pa_GetDeviceInfo(dev)) == NULL)
+		return;
+
+	printf("%s: %s\n", label, info->name);
 }
