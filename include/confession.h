@@ -197,7 +197,7 @@ struct state {
 	size_t				tx_offset;
 };
 
-/* src/kyrka.c */
+/* src/confession.c */
 int	confessions_last_signal(void);
 void	fatal(const char *, ...) __attribute__((noreturn));
 
