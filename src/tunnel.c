@@ -148,23 +148,9 @@ confessions_tunnel_manage(struct state *state, struct tunnel *tun)
 			fatal("failed to send NAT detect");
 	}
 
-	if (state->now >= tun->key_refresh) {
-		tun->key_send = state->now;
-		tun->key_refresh = state->now + 120;
-
-		if (kyrka_key_generate(tun->ctx) == -1)
-			fatal("failed to generate key offer");
-	}
-
-	if (state->now >= tun->key_send) {
-		tun->key_send = state->now + 1;
-
-		if (kyrka_key_offer(tun->ctx) == -1 &&
-		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_SECRET) {
-			fatal("failed to offer key: %d",
-			    kyrka_last_error(tun->ctx));
-		}
-	}
+	if (kyrka_key_manage(tun->ctx) == -1 &&
+	    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_SECRET)
+		fatal("kyrka_key_manage: %d", kyrka_last_error(tun->ctx));
 
 	if (tun->last_rx != 0 && (state->now - tun->last_rx) >= 30) {
 		tun->last_rx = state->now;
@@ -302,44 +288,25 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 	state = tun->mstate;
 
 	switch (evt->type) {
-	case KYRKA_EVENT_TX_ACTIVE:
-		/*
-		 * A bit of an oxymoron maybe, but when we get an TX active
-		 * event it means we received a key offer from the peer.
-		 */
+	case KYRKA_EVENT_EXCHANGE_INFO:
+		printf("[%p] [peer]: exchange '%s'\n",
+		    udata, evt->exchange.reason);
+		break;
+	case KYRKA_EVENT_KEYS_INFO:
+		printf("[%p] [peer]: online tx=%08x rx=%08x\n",
+		    udata, evt->keys.tx_spi, evt->keys.rx_spi);
 		tun->last_rx = state->now;
-		printf("[%p] [peer]: online - 0x%08x\n", udata, evt->tx.spi);
-
-		if (tun->peer_id != 0 && tun->peer_id != evt->tx.id) {
-			printf("[%p] [peer]: restarted, offering new key\n",
-			    udata);
-			if (kyrka_key_generate(tun->ctx) == -1) {
-				fatal("kyrka_key_generate: %d",
-				    kyrka_last_error(tun->ctx));
-			}
-		}
-
-		tun->peer_id = evt->tx.id;
+		tun->peer_id = evt->keys.peer_id;
 		tun->state = CONFESSIONS_STATE_ONLINE;
 		break;
-	case KYRKA_EVENT_RX_ACTIVE:
-		if (state->debug) {
-			printf("[%p] RX SA active 0x%08x\n",
-			    udata, evt->rx.spi);
-		}
-		break;
-	case KYRKA_EVENT_TX_EXPIRED:
-		printf("[%p] [peer]: key expired - 0x%08x\n",
-		    udata, evt->tx.spi);
-		break;
-	case KYRKA_EVENT_TX_ERASED:
-		printf("[%p] [peer]: inactivity detected - 0x%08x\n",
-		    udata, evt->tx.spi);
+	case KYRKA_EVENT_KEYS_ERASED:
+		printf("[%p] [peer]: keys erased, inactivity\n", udata);
+		tun->last_rx = state->now;
 		tun->peer_ip = state->cathedral_ip;
 		tun->peer_port = state->cathedral_port;
 		tun->state = CONFESSIONS_STATE_PENDING;
 		break;
-	case KYRKA_EVENT_PEER_UPDATE:
+	case KYRKA_EVENT_PEER_DISCOVERY:
 		in.s_addr = evt->peer.ip;
 		if (tun->peer_ip != evt->peer.ip ||
 		    tun->peer_port != evt->peer.port) {
@@ -356,6 +323,18 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 	case KYRKA_EVENT_AMBRY_RECEIVED:
 		printf("[%p] [ambry]: generation 0x%08x active\n",
 		    udata, evt->ambry.generation);
+		break;
+	case KYRKA_EVENT_REMEMBRANCE_RECEIVED:
+		for (size_t idx = 0; idx < 32; idx++) {
+			if (evt->remembrance.ips[idx] == 0 ||
+			    evt->remembrance.ports[idx] == 0)
+				break;
+
+			in.s_addr = evt->remembrance.ips[idx];
+
+			printf("cathedral %s:%u\n", inet_ntoa(in),
+			    be16toh(evt->remembrance.ports[idx]));
+		}
 		break;
 	}
 }
@@ -386,7 +365,8 @@ tunnel_socket_read(struct tunnel *tun)
 		tun->rx_pkt++;
 		tun->rx_len += ret;
 
-		if (kyrka_purgatory_input(tun->ctx, pkt, ret) == -1) {
+		if (kyrka_purgatory_input(tun->ctx, pkt, ret) == -1 &&
+		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_INTERNAL) {
 			fatal("purgatory input: %d",
 			    kyrka_last_error(tun->ctx));
 		}

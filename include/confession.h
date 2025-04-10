@@ -135,8 +135,6 @@ struct tunnel {
 
 	/* Timers for specific things that should trigger. */
 	time_t			last_rx;
-	time_t			key_send;
-	time_t			key_refresh;
 	time_t			cathedral_notify;
 
 	/* Our peer ip:port and its id. */
