@@ -333,7 +333,7 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 			in.s_addr = evt->remembrance.ips[idx];
 
 			printf("cathedral %s:%u\n", inet_ntoa(in),
-			    be16toh(evt->remembrance.ports[idx]));
+			    ntohs(evt->remembrance.ports[idx]));
 		}
 		break;
 	}
