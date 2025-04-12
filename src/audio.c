@@ -16,8 +16,12 @@
 
 #include <sys/types.h>
 
+#include <arpa/inet.h>
+
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "confession.h"
 
@@ -102,9 +106,11 @@ confessions_audio_process(struct state *state)
 {
 	u_int8_t		*ptr;
 	struct tunnel		*tun;
-	u_int8_t		buf[1024];
+	struct confessions_hdr	*hdr;
+	size_t			offset;
 	int			nbytes, idx;
 	opus_int16		opus[CONFESSIONS_SAMPLE_COUNT];
+	u_int8_t		buf[CONFESSIONS_DATA_PAYLOAD_MAX];
 
 	PRECOND(state != NULL);
 
@@ -117,16 +123,30 @@ confessions_audio_process(struct state *state)
 		for (idx = 0; idx < CONFESSIONS_SAMPLE_COUNT; idx++)
 			opus[idx] = ptr[2 * idx + 1] << 8 | ptr[2 * idx];
 
+		memset(buf, 0, sizeof(buf));
 		confessions_ring_queue(&state->buffers, ptr);
+
+		hdr = (struct confessions_hdr *)&buf[0];
+		hdr->type = CONFESSIONS_HDR_TYPE_VOICE;
+		offset = sizeof(*hdr);
 
 		LIST_FOREACH(tun, &state->tunnels, list) {
 			if ((nbytes = opus_encode(tun->encoder, opus,
-			    CONFESSIONS_SAMPLE_COUNT, buf, sizeof(buf))) < 0) {
+			    CONFESSIONS_SAMPLE_COUNT, &buf[offset],
+			    CONFESSIONS_OPUS_PAYLOAD_SPACE)) < 0) {
 				printf("opus_encode: %d\n", nbytes);
 				continue;
 			}
 
-			if (kyrka_heaven_input(tun->ctx, buf, nbytes) == -1) {
+			if ((size_t)nbytes > CONFESSIONS_OPUS_PAYLOAD_SPACE) {
+				printf("opus frame too large (%d)\n", nbytes);
+				continue;
+			}
+
+			hdr->length = htons(nbytes);
+
+			if (kyrka_heaven_input(tun->ctx,
+			    buf, CONFESSIONS_DATA_PAYLOAD_MAX) == -1) {
 				if (kyrka_last_error(tun->ctx) !=
 				    KYRKA_ERROR_NO_TX_KEY) {
 					fatal("heaven input failed");

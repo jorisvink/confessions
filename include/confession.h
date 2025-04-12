@@ -64,6 +64,25 @@
 #define confessions_atomic_cas_simple(x, e, d)	\
     __sync_bool_compare_and_swap(x, e, d)
 
+/*
+ * The protocol header that is added in front of each voice frame.
+ * It carries the actual length of the frame as we're padding it
+ */
+#define CONFESSIONS_HDR_TYPE_VOICE	1
+
+struct confessions_hdr {
+	u_int8_t		type;
+	u_int8_t		rfu[3];
+	u_int16_t		length;
+} __attribute__((packed));
+
+/* The size of all outgoing packets their payload. */
+#define CONFESSIONS_DATA_PAYLOAD_MAX	160
+
+/* The amount of space in the padded packet for an opus frame. */
+#define CONFESSIONS_OPUS_PAYLOAD_SPACE	\
+    (CONFESSIONS_DATA_PAYLOAD_MAX - sizeof(struct confessions_hdr))
+
 /* If we're in cathedral, direct or liturgy mode. */
 #define CONFESSIONS_MODE_DIRECT		1
 #define CONFESSIONS_MODE_CATHEDRAL	2

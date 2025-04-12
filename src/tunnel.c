@@ -366,7 +366,8 @@ tunnel_socket_read(struct tunnel *tun)
 		tun->rx_len += ret;
 
 		if (kyrka_purgatory_input(tun->ctx, pkt, ret) == -1 &&
-		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_INTERNAL) {
+		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_INTERNAL &&
+		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_RX_KEY) {
 			fatal("purgatory input: %d",
 			    kyrka_last_error(tun->ctx));
 		}
@@ -381,19 +382,35 @@ tunnel_socket_read(struct tunnel *tun)
 static void
 tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 {
-	u_int8_t		*ptr;
-	struct tunnel		*tun;
-	struct state		*state;
-	int			idx, samples;
-	opus_int16		pcm[CONFESSIONS_SAMPLE_COUNT];
+	u_int8_t			*ptr;
+	const struct confessions_hdr	*hdr;
+	struct tunnel			*tun;
+	struct state			*state;
+	const u_int8_t			*payload;
+	u_int16_t			opus_len;
+	int				idx, samples;
+	opus_int16			pcm[CONFESSIONS_SAMPLE_COUNT];
 
 	PRECOND(data != NULL);
 	PRECOND(udata != NULL);
 
 	tun = udata;
 	state = tun->mstate;
-
 	tun->last_rx = state->now;
+
+	if (len != CONFESSIONS_DATA_PAYLOAD_MAX) {
+		printf("[net]: ignoring %zu sized packet\n", len);
+		return;
+	}
+
+	hdr = data;
+	opus_len = ntohs(hdr->length);
+
+	if (opus_len > CONFESSIONS_OPUS_PAYLOAD_SPACE) {
+		printf("[net]: ignoring %zu sized packet (%zu, %u)\n",
+		    len, sizeof(*hdr), opus_len);
+		return;
+	}
 
 	if (seq != tun->seq + 1) {
 		if (state->debug)
@@ -406,9 +423,12 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 			return;
 		}
 	} else {
+		payload = data;
+		payload += sizeof(*hdr);
+
 		tun->seq = seq;
-		if ((samples = opus_decode(tun->decoder,
-		    data, len, pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
+		if ((samples = opus_decode(tun->decoder, payload, opus_len,
+		    pcm, CONFESSIONS_SAMPLE_COUNT, 0)) < 0) {
 			printf("[net]: opus_decode: %d\n", samples);
 			return;
 		}
