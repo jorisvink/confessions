@@ -260,6 +260,11 @@ tunnel_opus_initialize(struct tunnel *tun)
 	if (err != OPUS_OK)
 		fatal("failed to set bitrate: %d", err);
 
+	err = opus_encoder_ctl(tun->encoder,
+	    OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+	if (err != OPUS_OK)
+		fatal("failed to set signal type: %d", err);
+
 	err = opus_encoder_ctl(tun->encoder, OPUS_SET_INBAND_FEC(1));
 	if (err != OPUS_OK)
 		fatal("failed to enable FEC: %d", err);
