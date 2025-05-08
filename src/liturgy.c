@@ -76,7 +76,7 @@ confessions_liturgy_manage(struct state *state)
 	if (state->now >= state->liturgy.cathedral_notify) {
 		state->liturgy.cathedral_notify = state->now + 1;
 
-		if (kyrka_cathedral_liturgy(state->liturgy.ctx) == -1)
+		if (kyrka_cathedral_liturgy(state->liturgy.ctx, NULL, 0) == -1)
 			fatal("failed to send liturgy to cathedral");
 	}
 }
