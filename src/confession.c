@@ -65,6 +65,7 @@ usage(void)
 	printf("Cathedral specific options:\n");
 	printf("  -k <path>       - The device KEK\n");
 	printf("  -f <flock>      - Hexadecimal flock ID\n");
+	printf("  -d <domain>     - Hexadecimal flock domain\n");
 	printf("  -i <identity>   - Hexadecimal client ID\n");
 	printf("  -t <tunnel>     - Hexadecimal tunnel ID\n");
 	printf("\n");
@@ -87,7 +88,9 @@ int
 main(int argc, char **argv)
 {
 	int				ch;
+	u_int64_t			flock;
 	struct state			state;
+	u_int8_t			domain;
 	struct kyrka_cathedral_cfg	*cathedral;
 
 	if (argc < 3)
@@ -99,6 +102,11 @@ main(int argc, char **argv)
 	optind = 2;
 	cathedral = NULL;
 	state.mode = CONFESSIONS_MODE_DIRECT;
+
+	/*
+	 * The default flock domain confessions selects is 0x0a.
+	 */
+	domain = 0x0a;
 
 	if (!strcmp(argv[1], "direct")) {
 		state.mode = CONFESSIONS_MODE_DIRECT;
@@ -112,19 +120,22 @@ main(int argc, char **argv)
 		fatal("unknown mode '%s'", argv[1]);
 	}
 
-	while ((ch = getopt(argc, argv, "b:df:g:i:k:s:t:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:d:f:g:i:k:s:t:v")) != -1) {
 		switch (ch) {
 		case 'b':
 			confessions_split_ip_port(optarg,
 			    &state.local_ip, &state.local_port);
 			break;
 		case 'd':
-			state.debug = 1;
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-d is only for cathedral/liturgy mode");
+			if (sscanf(optarg, "%hhx", &domain) != 1)
+				fatal("failed to parse domain '%s'", optarg);
 			break;
 		case 'f':
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
 				fatal("-f is only for cathedral/liturgy mode");
-			if (sscanf(optarg, "%" PRIx64, &cathedral->flock) != 1)
+			if (sscanf(optarg, "%" PRIx64, &flock) != 1)
 				fatal("failed to parse flock '%s'", optarg);
 			break;
 		case 'g':
@@ -156,6 +167,9 @@ main(int argc, char **argv)
 			if (sscanf(optarg, "%hx", &cathedral->tunnel) != 1)
 				fatal("failed to parse tunnel '%s'", optarg);
 			break;
+		case 'v':
+			state.debug = 1;
+			break;
 		default:
 			usage();
 		}
@@ -176,6 +190,11 @@ main(int argc, char **argv)
 		break;
 	case CONFESSIONS_MODE_LITURGY:
 	case CONFESSIONS_MODE_CATHEDRAL:
+		if ((flock & 0xff) != 0)
+			fatal("invalid flock, domain bits set");
+
+		cathedral->flock = flock | domain;
+
 		if (cathedral->secret == NULL)
 			fatal("no secret (-s) specified");
 		if (cathedral->flock == 0)
