@@ -37,6 +37,10 @@ In the **liturgy** mode you autodiscover peers in the same group and
 automatically establish e2e tunnels to them, effectively giving you
 a group conversation.
 
+When using a cathedral (both **cathedral** and **liturgy** mode) confessions
+will use the default flock domain *0a* unless otherwise specified with
+the -d option.
+
 ## Usage
 
 ```
@@ -55,6 +59,7 @@ Direct specific options:
 Cathedral specific options:
   -k <path>       - The device KEK
   -f <flock>      - Hexadecimal flock ID
+  -d <domain>     - Hexadecimal flock domain
   -i <identity>   - Hexadecimal client ID
   -t <tunnel>     - Hexadecimal tunnel ID
 
