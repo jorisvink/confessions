@@ -26,12 +26,17 @@ ifeq ("$(SANITIZE)", "1")
 	LDFLAGS+=-fsanitize=address,undefined
 endif
 
+ifeq ("$(OSNAME)", "")
 OSNAME=$(shell uname -s | sed -e 's/[-_].*//g' | tr A-Z a-z)
-ifeq ("$(OSNAME)", "linux")
-	CFLAGS+=-D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 endif
 
-LDFLAGS+=-lkyrka
+ifeq ("$(OSNAME)", "linux")
+	LDFLAGS+=-lkyrka
+	CFLAGS+=-D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+else ifeq ("$(OSNAME)", "windows")
+	CFLAGS+=-D_GNU_SOURCE=1 -DPLATFORM_WINDOWS
+	LDFLAGS+=-L$(LIBKYRKA_PATH) -lkyrka -lwsock32 -lws2_32
+endif
 
 CFLAGS+=$(shell pkg-config --cflags portaudio-2.0)
 CFLAGS+=$(shell pkg-config --cflags opus)
@@ -58,6 +63,6 @@ $(OBJDIR)/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(OBJDIR) $(BIN)
+	rm -rf $(OBJDIR) $(BIN)*
 
 .PHONY: all clean force

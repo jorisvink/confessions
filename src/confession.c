@@ -15,10 +15,15 @@
  */
 
 #include <sys/types.h>
-#include <sys/socket.h>
 
+#if !defined(PLATFORM_WINDOWS)
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 
 #include <errno.h>
 #include <inttypes.h>
@@ -43,6 +48,10 @@ static void	confessions_signal_initialize(void);
 static void	confessions_run(struct state *);
 static void	confessions_buffers_initialize(struct state *);
 static void	confessions_split_ip_port(char *, u_int32_t *, u_int16_t *);
+
+#if defined(PLATFORM_WINDOWS)
+static void	confessions_windows_init(void);
+#endif
 
 /* The last received signal. */
 static volatile sig_atomic_t	sig_recv = -1;
@@ -210,6 +219,10 @@ main(int argc, char **argv)
 		fatal("what is mode?");
 	}
 
+#if defined(PLATFORM_WINDOWS)
+	confessions_windows_init();
+#endif
+
 	confessions_signal_initialize();
 	confessions_split_ip_port(argv[0],
 	    &state.cathedral_ip, &state.cathedral_port);
@@ -279,13 +292,17 @@ confessions_ms(void)
 static void
 confessions_signal_initialize(void)
 {
+#if !defined(PLATFORM_WINDOWS)
 	sigset_t	sigset;
+#endif
 
 	confessions_signal_trap(SIGINT);
-	confessions_signal_trap(SIGHUP);
-	confessions_signal_trap(SIGQUIT);
 	confessions_signal_trap(SIGTERM);
 	confessions_signal_trap(SIGSEGV);
+
+#if !defined(PLATFORM_WINDOWS)
+	confessions_signal_trap(SIGHUP);
+	confessions_signal_trap(SIGQUIT);
 
 	if (sigfillset(&sigset) == -1)
 		fatal("sigfillset: %s", strerror(errno));
@@ -295,6 +312,7 @@ confessions_signal_initialize(void)
 	sigdelset(&sigset, SIGTERM);
 	sigdelset(&sigset, SIGQUIT);
 	(void)sigprocmask(SIG_BLOCK, &sigset, NULL);
+#endif
 }
 
 /*
@@ -340,10 +358,12 @@ confessions_run(struct state *state)
 
 	while (running) {
 		switch (confessions_last_signal()) {
-		case SIGINT:
+#if !defined(PLATFORM_WINDOWS)
 		case SIGHUP:
-		case SIGTERM:
 		case SIGQUIT:
+#endif
+		case SIGINT:
+		case SIGTERM:
 			running = 0;
 			continue;
 		}
@@ -411,6 +431,7 @@ confessions_split_ip_port(char *str, u_int32_t *ip, u_int16_t *port)
 static void
 confessions_signal_trap(int sig)
 {
+#if !defined(PLATFORM_WINDOWS)
 	struct sigaction	sa;
 
 	memset(&sa, 0, sizeof(sa));
@@ -425,6 +446,12 @@ confessions_signal_trap(int sig)
 
 	if (sigaction(sig, &sa, NULL) == -1)
 		fatal("sigaction: %s", strerror(errno));
+#else
+	if (sig == SIGSEGV)
+		signal(sig, signal_memfault);
+	else
+		signal(sig, signal_hdlr);
+#endif
 }
 
 /*
@@ -447,3 +474,17 @@ signal_memfault(int sig)
 	kyrka_emergency_erase();
 	abort();
 }
+
+#if defined(PLATFORM_WINDOWS)
+/*
+ * Windows specific initialization code.
+ */
+static void
+confessions_windows_init(void)
+{
+	WSADATA data;
+
+	if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
+		fatal("failed to initialise sockets");
+}
+#endif

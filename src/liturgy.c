@@ -16,8 +16,10 @@
 
 #include <sys/types.h>
 
+#if !defined(PLATFORM_WINDOWS)
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#endif
 
 #include <errno.h>
 #include <stdio.h>

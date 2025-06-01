@@ -16,7 +16,9 @@
 
 #include <sys/types.h>
 
+#if !defined(PLATFORM_WINDOWS)
 #include <arpa/inet.h>
+#endif
 
 #include <limits.h>
 #include <stdio.h>

@@ -15,13 +15,19 @@
  */
 
 #include <sys/types.h>
-#include <sys/socket.h>
 
+#if !defined(PLATFORM_WINDOWS)
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
+#else
+#include <winsock2.h>
+#define poll WSAPoll
+#define MSG_DONTWAIT 0
+#endif
 
 #include <errno.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -352,7 +358,7 @@ tunnel_socket_read(struct tunnel *tun)
 {
 	int		idx;
 	ssize_t		ret;
-	u_int8_t	pkt[1500];
+	char		pkt[1500];
 
 	PRECOND(tun != NULL);
 

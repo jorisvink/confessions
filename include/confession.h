@@ -18,11 +18,12 @@
 #define __H_CONFESSION_H
 
 #include <sys/types.h>
-#include <sys/queue.h>
 
 #include <opus.h>
 #include <portaudio.h>
 #include <libkyrka/libkyrka.h>
+
+#include "queue.h"
 
 #define PRECOND(x)							\
 	do {								\
