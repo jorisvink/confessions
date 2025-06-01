@@ -7,6 +7,7 @@ BIN=confessions
 DESTDIR?=
 PREFIX?=/usr/local
 INSTALL_DIR=$(PREFIX)/bin
+LIBKYRKA_PATH?=/usr/local
 
 CFLAGS+=-std=c99 -pedantic -Wall -Werror -Wstrict-prototypes
 CFLAGS+=-Wmissing-prototypes -Wmissing-declarations -Wshadow
@@ -30,16 +31,14 @@ ifeq ("$(OSNAME)", "")
 OSNAME=$(shell uname -s | sed -e 's/[-_].*//g' | tr A-Z a-z)
 endif
 
+CFLAGS+=-I$(LIBKYRKA_PATH)/include
+LDFLAGS+=-L$(LIBKYRKA_PATH)/lib -lkyrka
+
 ifeq ("$(OSNAME)", "linux")
-	LDFLAGS+=-lkyrka
-	CFLAGS+=-I/usr/local/include
 	CFLAGS+=-D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 else ifeq ("$(OSNAME)", "windows")
-	CFLAGS+=-D_GNU_SOURCE=1 -DPLATFORM_WINDOWS -I$(LIBKYRKA_PATH)/include
-	LDFLAGS+=-L$(LIBKYRKA_PATH)/lib -lkyrka -lwsock32 -lws2_32
-else
-	LDFLAGS+=-lkyrka
-	CFLAGS+=-I/usr/local/include
+	CFLAGS+=-DPLATFORM_WINDOWS
+	LDFLAGS+=-lwsock32 -lws2_32
 endif
 
 CFLAGS+=$(shell pkg-config --cflags portaudio-2.0)
