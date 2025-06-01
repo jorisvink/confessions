@@ -36,6 +36,8 @@ ifeq ("$(OSNAME)", "linux")
 else ifeq ("$(OSNAME)", "windows")
 	CFLAGS+=-D_GNU_SOURCE=1 -DPLATFORM_WINDOWS
 	LDFLAGS+=-L$(LIBKYRKA_PATH) -lkyrka -lwsock32 -lws2_32
+else
+	LDFLAGS+=-lkyrka
 endif
 
 CFLAGS+=$(shell pkg-config --cflags portaudio-2.0)
