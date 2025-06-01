@@ -12,7 +12,7 @@ CFLAGS+=-std=c99 -pedantic -Wall -Werror -Wstrict-prototypes
 CFLAGS+=-Wmissing-prototypes -Wmissing-declarations -Wshadow
 CFLAGS+=-Wpointer-arith -Wcast-qual -Wsign-compare -O2
 CFLAGS+=-fstack-protector-all -Wtype-limits -fno-common
-CFLAGS+=-Iinclude -I/usr/local/include
+CFLAGS+=-Iinclude
 CFLAGS+=-g
 
 SRC=	src/confession.c \
@@ -32,12 +32,14 @@ endif
 
 ifeq ("$(OSNAME)", "linux")
 	LDFLAGS+=-lkyrka
+	CFLAGS+=-I/usr/local/include
 	CFLAGS+=-D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 else ifeq ("$(OSNAME)", "windows")
-	CFLAGS+=-D_GNU_SOURCE=1 -DPLATFORM_WINDOWS
-	LDFLAGS+=-L$(LIBKYRKA_PATH) -lkyrka -lwsock32 -lws2_32
+	CFLAGS+=-D_GNU_SOURCE=1 -DPLATFORM_WINDOWS -I$(LIBKYRKA_PATH)/include
+	LDFLAGS+=-L$(LIBKYRKA_PATH)/lib -lkyrka -lwsock32 -lws2_32
 else
 	LDFLAGS+=-lkyrka
+	CFLAGS+=-I/usr/local/include
 endif
 
 CFLAGS+=$(shell pkg-config --cflags portaudio-2.0)

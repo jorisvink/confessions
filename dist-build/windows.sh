@@ -9,4 +9,4 @@
 
 PKG_CONFIG_PATH=~/src/mxe/usr/x86_64-w64-mingw32.static/lib/pkgconfig \
     CC=x86_64-w64-mingw32.static-gcc OSNAME=windows \
-    LIBKYRKA_PATH=~/src/libkyrka-windows make
+    LIBKYRKA_PATH=~/src/libkyrka/x86_64-w64-mingw32.static-gcc make
