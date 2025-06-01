@@ -223,6 +223,9 @@ confessions_tunnel_wait(struct state *state)
 void
 confessions_tunnel_socket(struct state *state, struct tunnel *tun)
 {
+#if defined(PLATFORM_WINDOWS)
+	u_long			val;
+#endif
 	struct sockaddr_in	sin;
 
 	PRECOND(state != NULL);
@@ -230,6 +233,12 @@ confessions_tunnel_socket(struct state *state, struct tunnel *tun)
 
 	if ((tun->fd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
 		fatal("socket: %s", strerror(errno));
+
+#if defined(PLATFORM_WINDOWS)
+	val = 1;
+	if (ioctlsocket(tun->fd, FIONBIO, &val) != NO_ERROR)
+		fatal("failed to mark socket as non-blocking");
+#endif
 
 	if (state->mode == CONFESSIONS_MODE_DIRECT) {
 		sin.sin_family = AF_INET;
@@ -365,8 +374,13 @@ tunnel_socket_read(struct tunnel *tun)
 	for (idx = 0; idx < 32; idx++) {
 		ret = recv(tun->fd, pkt, sizeof(pkt), MSG_DONTWAIT);
 		if (ret == -1) {
+#if defined(PLATFORM_WINDOWS)
+			if (WSAGetLastError() != WSAEWOULDBLOCK)
+				fatal("recv failed: %d", WSAGetLastError());
+#else
 			if (errno != EAGAIN)
 				fatal("recv failed: %s", strerror(errno));
+#endif
 			break;
 		}
 
