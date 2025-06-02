@@ -51,8 +51,8 @@ confessions_audio_init(struct state *state)
 	if ((err = Pa_Initialize()) != paNoError)
 		fatal("Pa_Initialize: %d", err);
 
-	params.suggestedLatency = 0;
 	params.sampleFormat = paInt16;
+	params.suggestedLatency = 0.01f;
 	params.hostApiSpecificStreamInfo = NULL;
 	params.device = Pa_GetDefaultInputDevice();
 	params.channelCount = CONFESSIONS_CHANNEL_COUNT;
@@ -82,8 +82,8 @@ confessions_audio_playback(struct tunnel *tun)
 	PRECOND(tun != NULL);
 	PRECOND(tun->stream == NULL);
 
-	params.suggestedLatency = 0;
 	params.sampleFormat = paInt16;
+	params.suggestedLatency = 0.01f;
 	params.hostApiSpecificStreamInfo = NULL;
 	params.device = Pa_GetDefaultOutputDevice();
 	params.channelCount = CONFESSIONS_CHANNEL_COUNT;
