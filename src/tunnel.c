@@ -70,8 +70,8 @@ confessions_tunnel_alloc(struct state *state, struct kyrka_cathedral_cfg *cfg)
 			fatal("cathedral config: %d",
 			    kyrka_last_error(tun->ctx));
 	} else {
-		if (kyrka_secret_load(tun->ctx, state->secret) == -1)
-			fatal("kyrka_secret_load: %d",
+		if (kyrka_secret_load_path(tun->ctx, state->secret) == -1)
+			fatal("kyrka_secret_load_path: %d",
 			    kyrka_last_error(tun->ctx));
 	}
 
