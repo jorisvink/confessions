@@ -72,11 +72,11 @@ usage(void)
 	printf("  -b <ip:port>    - Bind to the given ip:port\n");
 	printf("\n");
 	printf("Cathedral specific options:\n");
-	printf("  -k <path>       - The device KEK\n");
-	printf("  -f <flock>      - Hexadecimal flock ID\n");
-	printf("  -d <domain>     - Hexadecimal flock domain\n");
-	printf("  -i <identity>   - Hexadecimal client ID\n");
-	printf("  -t <tunnel>     - Hexadecimal tunnel ID\n");
+	printf("  -k <path>           - The device KEK\n");
+	printf("  -f <flock>          - Hexadecimal flock ID\n");
+	printf("  -d <domain>         - Hexadecimal flock domain\n");
+	printf("  -i <identity>       - Hexadecimal client ID\n");
+	printf("  -t [flock]:<tunnel> - Hexadecimal tunnel ID\n");
 	printf("\n");
 	printf("Liturgy specific options:\n");
 	printf("  -g <group>      - The liturgy group to join\n");
@@ -85,6 +85,9 @@ usage(void)
 	printf("to talk too. If you have two devices (01 and 02) and you\n");
 	printf("want to establish a voice channel between these you use\n");
 	printf("tunnel 0x0102 on device 01 and tunnel 0x0201 on device 02.\n");
+	printf("\n");
+	printf("In cathedral mode, the tunnel ID (-t) can be prefixed with\n");
+	printf("a destination flock in case of xflock communication.\n");
 	printf("\n");
 	printf("In liturgy mode, the tunnel ID (-t) only contains your\n");
 	printf("tunnel end point, so using the same example as before\n");
@@ -97,10 +100,10 @@ int
 main(int argc, char **argv)
 {
 	int				ch;
-	u_int64_t			flock;
 	struct state			state;
 	u_int8_t			domain;
 	struct kyrka_cathedral_cfg	*cathedral;
+	u_int64_t			flock_src, flock_dst;
 
 	if (argc < 3)
 		usage();
@@ -109,6 +112,8 @@ main(int argc, char **argv)
 	LIST_INIT(&state.tunnels);
 
 	optind = 2;
+	flock_dst = 0;
+	flock_src = 0;
 	cathedral = NULL;
 	state.mode = CONFESSIONS_MODE_DIRECT;
 
@@ -144,7 +149,7 @@ main(int argc, char **argv)
 		case 'f':
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
 				fatal("-f is only for cathedral/liturgy mode");
-			if (sscanf(optarg, "%" PRIx64, &flock) != 1)
+			if (sscanf(optarg, "%" PRIx64, &flock_src) != 1)
 				fatal("failed to parse flock '%s'", optarg);
 			break;
 		case 'g':
@@ -173,8 +178,15 @@ main(int argc, char **argv)
 		case 't':
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
 				fatal("-t is only for cathedral/liturgy mode");
-			if (sscanf(optarg, "%hx", &cathedral->tunnel) != 1)
-				fatal("failed to parse tunnel '%s'", optarg);
+			if (sscanf(optarg, "%" PRIx64 ":%hx",
+			    &flock_dst, &cathedral->tunnel) != 2) {
+				flock_dst = 0;
+				if (sscanf(optarg, "%hx",
+				    &cathedral->tunnel) != 1) {
+					fatal("failed to parse tunnel '%s'",
+					    optarg);
+				}
+			}
 			break;
 		case 'v':
 			state.debug = 1;
@@ -199,14 +211,16 @@ main(int argc, char **argv)
 		break;
 	case CONFESSIONS_MODE_LITURGY:
 	case CONFESSIONS_MODE_CATHEDRAL:
-		if ((flock & 0xff) != 0)
-			fatal("invalid flock, domain bits set");
+		if ((flock_src & 0xff) != 0)
+			fatal("invalid src flock, domain bits set");
+		if (flock_dst != 0 && (flock_dst & 0xff) != 0)
+			fatal("invalid dst flock, domain bits set");
 
-		cathedral->flock = flock | domain;
+		cathedral->flock_src = flock_src | domain;
 
 		if (cathedral->secret == NULL)
 			fatal("no secret (-s) specified");
-		if (cathedral->flock == 0)
+		if (cathedral->flock_src == 0)
 			fatal("no flock (-f) specified");
 		if (cathedral->identity == 0)
 			fatal("no identity (-i) specified");
@@ -214,6 +228,13 @@ main(int argc, char **argv)
 			fatal("no KEK (-k) specified");
 		if (cathedral->tunnel == 0)
 			fatal("no tunnel (-t) specified");
+
+		if (flock_dst == 0)
+			cathedral->flock_dst = cathedral->flock_src;
+		else
+			cathedral->flock_dst = flock_dst | domain;
+
+		printf("%lx, %lx\n", cathedral->flock_dst, flock_dst);
 		break;
 	default:
 		fatal("what is mode?");
