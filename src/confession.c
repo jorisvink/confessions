@@ -234,7 +234,6 @@ main(int argc, char **argv)
 		else
 			cathedral->flock_dst = flock_dst | domain;
 
-		printf("%lx, %lx\n", cathedral->flock_dst, flock_dst);
 		break;
 	default:
 		fatal("what is mode?");
