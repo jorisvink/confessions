@@ -336,7 +336,8 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 			if (tun->peer_ip != state->cathedral_ip &&
 			    tun->peer_port != state->cathedral_port) {
 				printf("[%p] [peer]: p2p discovery %s:%u\n",
-				    udata, inet_ntoa(in), evt->peer.port);
+				    udata, inet_ntoa(in),
+				    htons(evt->peer.port));
 			}
 		}
 		break;
