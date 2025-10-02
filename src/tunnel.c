@@ -308,6 +308,9 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 	state = tun->mstate;
 
 	switch (evt->type) {
+	case KYRKA_EVENT_LOGMSG:
+		printf("[%p] [peer]: %s\n", udata, evt->logmsg.log);
+		break;
 	case KYRKA_EVENT_EXCHANGE_INFO:
 		printf("[%p] [peer]: exchange '%s'\n",
 		    udata, evt->exchange.reason);
