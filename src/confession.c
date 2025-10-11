@@ -66,12 +66,13 @@ usage(void)
 	printf("  liturgy         - Use autodiscovery via cathedral.\n");
 	printf("\n");
 	printf("Generic options:\n");
-	printf("  -s <path>       - The shared secret or catehdral secret\n");
+	printf("  -s <path>       - The shared secret or cathedral secret\n");
 	printf("\n");
 	printf("Direct specific options:\n");
 	printf("  -b <ip:port>    - Bind to the given ip:port\n");
 	printf("\n");
 	printf("Cathedral specific options:\n");
+	printf("  -o <cosk>           - The COSK\n");
 	printf("  -k <path>           - The device KEK\n");
 	printf("  -f <flock>          - Hexadecimal flock ID\n");
 	printf("  -d <domain>         - Hexadecimal flock domain\n");
@@ -134,7 +135,7 @@ main(int argc, char **argv)
 		fatal("unknown mode '%s'", argv[1]);
 	}
 
-	while ((ch = getopt(argc, argv, "b:d:f:g:i:k:s:t:v")) != -1) {
+	while ((ch = getopt(argc, argv, "b:d:f:g:i:k:o:s:t:v")) != -1) {
 		switch (ch) {
 		case 'b':
 			confessions_split_ip_port(optarg,
@@ -168,6 +169,11 @@ main(int argc, char **argv)
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
 				fatal("-i is only for cathedral/liturgy mode");
 			cathedral->kek = optarg;
+			break;
+		case 'o':
+			if (state.mode == CONFESSIONS_MODE_DIRECT)
+				fatal("-o is only for cathedral/liturgy mode");
+			cathedral->cosk = optarg;
 			break;
 		case 's':
 			if (state.mode == CONFESSIONS_MODE_DIRECT)
