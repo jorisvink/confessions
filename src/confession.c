@@ -245,6 +245,8 @@ main(int argc, char **argv)
 		fatal("what is mode?");
 	}
 
+	printf("libkyrka: %s\n", kyrka_version());
+
 #if defined(PLATFORM_WINDOWS)
 	confessions_windows_init();
 #endif
