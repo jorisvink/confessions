@@ -215,6 +215,10 @@ struct state {
 	size_t				tx_offset;
 };
 
+/* version */
+extern const char	*confessions_build_rev;
+extern const char	*confessions_build_date;
+
 /* src/confession.c */
 int	confessions_last_signal(void);
 void	fatal(const char *, ...) __attribute__((noreturn));

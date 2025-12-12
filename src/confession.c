@@ -60,6 +60,10 @@ void
 usage(void)
 {
 	printf("Usage: confessions [mode] [opts] [ip:port]\n");
+	printf("\n");
+	printf("Build:\n");
+	printf("  %s (%s)\n", confessions_build_rev, confessions_build_date);
+	printf("\n");
 	printf("Mode choices:\n");
 	printf("  direct          - Direct tunnel between two peers.\n");
 	printf("  cathedral       - Use a cathedral to do peer discovery.\n");

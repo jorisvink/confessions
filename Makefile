@@ -3,6 +3,7 @@
 CC?=cc
 OBJDIR?=obj
 BIN=confessions
+VERSION=$(OBJDIR)/version
 
 DESTDIR?=
 PREFIX?=/usr/local
@@ -49,10 +50,13 @@ LDFLAGS+=$(shell pkg-config --libs libsodium)
 LDFLAGS+=$(shell pkg-config --libs opus)
 
 OBJS=	$(SRC:src/%.c=$(OBJDIR)/%.o)
+OBJS+=	$(OBJDIR)/version.o
 
-all: $(BIN)
+all:
+	$(MAKE) $(OBJDIR)
+	$(MAKE) $(BIN)
 
-$(BIN): $(OBJDIR) $(OBJS)
+$(BIN): $(OBJDIR) $(OBJS) $(VERSION).c
 	$(CC) $(OBJS) $(LDFLAGS) -o $(BIN)
 
 install: $(BIN)
@@ -64,6 +68,33 @@ $(OBJDIR):
 
 $(OBJDIR)/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+src/confessions: $(VERSION).c
+
+$(VERSION).c: force
+	@if [ -f RELEASE ]; then \
+		printf "const char *confessions_build_rev = \"%s\";\n" \
+		    `cat RELEASE` > $(VERSION)_gen; \
+	elif [ -d .git ]; then \
+		GIT_REVISION=`git rev-parse --short=8 HEAD`; \
+		GIT_BRANCH=`git rev-parse --abbrev-ref HEAD`; \
+		rm -f $(VERSION)_gen; \
+		printf "const char *confessions_build_rev = \"%s-%s\";\n" \
+		    $$GIT_BRANCH $$GIT_REVISION > $(VERSION)_gen; \
+	else \
+		echo "No version information found (no .git or RELEASE)"; \
+		exit 1; \
+	fi
+	@printf "const char *confessions_build_date = \"%s\";\n" \
+	    `date +"%Y-%m-%d"` >> $(VERSION)_gen;
+	@if [ -f $(VERSION).c ]; then \
+		cmp -s $(VERSION)_gen $(VERSION).c; \
+		if [ $$? -ne 0 ]; then \
+			cp $(VERSION)_gen $(VERSION).c; \
+		fi \
+	else \
+		cp $(VERSION)_gen $(VERSION).c; \
+	fi
 
 clean:
 	rm -rf $(OBJDIR) $(BIN)*
