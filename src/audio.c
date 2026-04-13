@@ -106,6 +106,8 @@ confessions_audio_playback(struct tunnel *tun)
 void
 confessions_audio_process(struct state *state)
 {
+	size_t			len;
+	struct kyrka_packet	pkt;
 	u_int8_t		*ptr;
 	struct tunnel		*tun;
 	struct confessions_hdr	*hdr;
@@ -147,8 +149,23 @@ confessions_audio_process(struct state *state)
 
 			hdr->length = htons(nbytes);
 
-			if (kyrka_heaven_input(tun->ctx,
-			    buf, CONFESSIONS_DATA_PAYLOAD_MAX) == -1) {
+			ptr = kyrka_packet_databuf(tun->ctx, &pkt, &len);
+			if (ptr == NULL)
+				fatal("failed to obtain heaven data buffer");
+
+			if (CONFESSIONS_DATA_PAYLOAD_MAX > len)
+				fatal("confessions payload too large");
+
+			pkt.length = CONFESSIONS_DATA_PAYLOAD_MAX;
+			memcpy(ptr, buf, CONFESSIONS_DATA_PAYLOAD_MAX);
+
+			if (tun->peer_ip == state->cathedral_ip &&
+			    tun->peer_port == state->cathedral_port)
+				pkt.shroud = KYRKA_PACKET_SHROUD_CATHEDRAL;
+			else
+				pkt.shroud = KYRKA_PACKET_SHROUD_PEER;
+
+			if (kyrka_heaven_input(tun->ctx, &pkt) == -1) {
 				if (kyrka_last_error(tun->ctx) !=
 				    KYRKA_ERROR_NO_TX_KEY) {
 					fatal("heaven input failed");

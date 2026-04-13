@@ -31,7 +31,8 @@
 #include "confession.h"
 
 static void	liturgy_event(KYRKA *, union kyrka_event *, void *);
-static void	liturgy_cathedral_send(const void *, size_t, u_int64_t, void *);
+static void	liturgy_cathedral_send(struct kyrka_packet *,
+		    u_int64_t, void *);
 
 /*
  * Initialize the given tunnel in liturgy mode, configuring a cathedral
@@ -137,13 +138,15 @@ liturgy_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
  * cathedral, so lets do so.
  */
 static void
-liturgy_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
+liturgy_cathedral_send(struct kyrka_packet *pkt, u_int64_t msg, void *udata)
 {
+	size_t			len;
 	struct sockaddr_in	sin;
 	struct tunnel		*tun;
+	u_int8_t		*ptr;
 	struct state		*state;
 
-	PRECOND(data != NULL);
+	PRECOND(pkt != NULL);
 	PRECOND(udata != NULL);
 
 	tun = udata;
@@ -153,7 +156,10 @@ liturgy_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
 	sin.sin_port = state->cathedral_port;
 	sin.sin_addr.s_addr = state->cathedral_ip;
 
+	if ((ptr = kyrka_packet_sendbuf(tun->ctx, pkt, &len)) == NULL)
+		fatal("failed to obtain liturgy send buffer");
+
 	if (sendto(tun->fd,
-	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+	    ptr, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("sendto: %s", strerror(errno));
 }

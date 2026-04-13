@@ -41,9 +41,10 @@
 static void	tunnel_socket_read(struct tunnel *);
 static void	tunnel_opus_initialize(struct tunnel *);
 static void	tunnel_event(KYRKA *, union kyrka_event *, void *);
-static void	tunnel_clear_send(const void *, size_t, u_int64_t, void *);
-static void	tunnel_crypto_send(const void *, size_t, u_int64_t, void *);
-static void	tunnel_cathedral_send(const void *, size_t, u_int64_t, void *);
+
+static void	tunnel_clear_send(struct kyrka_packet *, u_int64_t, void *);
+static void	tunnel_crypto_send(struct kyrka_packet *, u_int64_t, void *);
+static void	tunnel_cathedral_send(struct kyrka_packet *, u_int64_t, void *);
 
 /*
  * Allocate and setup the given tunnel context with either the given
@@ -341,6 +342,12 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 				printf("[%p] [peer]: p2p discovery %s:%u\n",
 				    udata, inet_ntoa(in),
 				    htons(evt->peer.port));
+
+				if (kyrka_p2p_active(tun->ctx, 1) == -1)
+					fatal("failed to set p2p status");
+			} else {
+				if (kyrka_p2p_active(tun->ctx, 0) == -1)
+					fatal("failed to set p2p status");
 			}
 		}
 		break;
@@ -369,14 +376,24 @@ tunnel_event(KYRKA *ctx, union kyrka_event *evt, void *udata)
 static void
 tunnel_socket_read(struct tunnel *tun)
 {
-	int		idx;
-	ssize_t		ret;
-	char		pkt[1500];
+	int			idx;
+	size_t			len;
+	ssize_t			ret;
+	struct kyrka_packet	pkt;
+	u_int8_t		*ptr;
+	struct sockaddr_in	peer;
+	socklen_t		socklen;
 
 	PRECOND(tun != NULL);
 
 	for (idx = 0; idx < 32; idx++) {
-		ret = recv(tun->fd, pkt, sizeof(pkt), MSG_DONTWAIT);
+		if ((ptr = kyrka_packet_recvbuf(tun->ctx, &pkt, &len)) == NULL)
+			fatal("failed to get tunnel receive buffer");
+
+		socklen = sizeof(peer);
+
+		ret = recvfrom(tun->fd, ptr, len, MSG_DONTWAIT,
+		    (struct sockaddr *)&peer, &socklen);
 		if (ret == -1) {
 #if defined(PLATFORM_WINDOWS)
 			if (WSAGetLastError() != WSAEWOULDBLOCK)
@@ -394,7 +411,15 @@ tunnel_socket_read(struct tunnel *tun)
 		tun->rx_pkt++;
 		tun->rx_len += ret;
 
-		if (kyrka_purgatory_input(tun->ctx, pkt, ret) == -1 &&
+		pkt.length = ret;
+
+		if (peer.sin_addr.s_addr == tun->mstate->cathedral_ip &&
+		    peer.sin_port == tun->mstate->cathedral_port)
+			pkt.shroud = KYRKA_PACKET_SHROUD_CATHEDRAL;
+		else
+			pkt.shroud = KYRKA_PACKET_SHROUD_PEER;
+
+		if (kyrka_purgatory_input(tun->ctx, &pkt) == -1 &&
 		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_INTERNAL &&
 		    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_RX_KEY) {
 			fatal("purgatory input: %d",
@@ -409,7 +434,7 @@ tunnel_socket_read(struct tunnel *tun)
  * to audio via the playback ring.
  */
 static void
-tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
+tunnel_clear_send(struct kyrka_packet *pkt, u_int64_t seq, void *udata)
 {
 	u_int8_t			*ptr;
 	const struct confessions_hdr	*hdr;
@@ -420,24 +445,24 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	int				idx, samples;
 	opus_int16			pcm[CONFESSIONS_SAMPLE_COUNT];
 
-	PRECOND(data != NULL);
+	PRECOND(pkt != NULL);
 	PRECOND(udata != NULL);
 
 	tun = udata;
 	state = tun->mstate;
 	tun->last_rx = state->now;
 
-	if (len != CONFESSIONS_DATA_PAYLOAD_MAX) {
-		printf("[net]: ignoring %zu sized packet\n", len);
+	if (pkt->length != CONFESSIONS_DATA_PAYLOAD_MAX) {
+		printf("[net]: ignoring %zu sized packet\n", pkt->length);
 		return;
 	}
 
-	hdr = data;
+	hdr = kyrka_packet_data(pkt);
 	opus_len = ntohs(hdr->length);
 
 	if (opus_len > CONFESSIONS_OPUS_PAYLOAD_SPACE) {
 		printf("[net]: ignoring %zu sized packet (%zu, %u)\n",
-		    len, sizeof(*hdr), opus_len);
+		    pkt->length, sizeof(*hdr), opus_len);
 		return;
 	}
 
@@ -452,7 +477,7 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
 			return;
 		}
 	} else {
-		payload = data;
+		payload = kyrka_packet_data(pkt);
 		payload += sizeof(*hdr);
 
 		tun->seq = seq;
@@ -481,12 +506,14 @@ tunnel_clear_send(const void *data, size_t len, u_int64_t seq, void *udata)
  * We send it to the currently set peer ip and port.
  */
 static void
-tunnel_crypto_send(const void *data, size_t len, u_int64_t seq, void *udata)
+tunnel_crypto_send(struct kyrka_packet *pkt, u_int64_t seq, void *udata)
 {
 	struct sockaddr_in	sin;
+	size_t			len;
+	u_int8_t		*ptr;
 	struct tunnel		*tun;
 
-	PRECOND(data != NULL);
+	PRECOND(pkt != NULL);
 	PRECOND(udata != NULL);
 
 	tun = udata;
@@ -495,8 +522,11 @@ tunnel_crypto_send(const void *data, size_t len, u_int64_t seq, void *udata)
 	sin.sin_port = tun->peer_port;
 	sin.sin_addr.s_addr = tun->peer_ip;
 
+	if ((ptr = kyrka_packet_sendbuf(tun->ctx, pkt, &len)) == NULL)
+		fatal("failed to obtain send buffer");
+
 	if (sendto(tun->fd,
-	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+	    ptr, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("sendto: %s", strerror(errno));
 
 	tun->tx_pkt++;
@@ -508,14 +538,16 @@ tunnel_crypto_send(const void *data, size_t len, u_int64_t seq, void *udata)
  * We make sure we send it to the correct cathedral ip and port.
  */
 static void
-tunnel_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
+tunnel_cathedral_send(struct kyrka_packet *pkt, u_int64_t msg, void *udata)
 {
+	size_t			len;
 	struct sockaddr_in	sin;
 	u_int16_t		port;
 	struct tunnel		*tun;
+	u_int8_t		*ptr;
 	struct state		*state;
 
-	PRECOND(data != NULL);
+	PRECOND(pkt != NULL);
 	PRECOND(udata != NULL);
 
 	tun = udata;
@@ -529,7 +561,10 @@ tunnel_cathedral_send(const void *data, size_t len, u_int64_t msg, void *udata)
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = state->cathedral_ip;
 
+	if ((ptr = kyrka_packet_sendbuf(tun->ctx, pkt, &len)) == NULL)
+		fatal("failed to obtain cathedral send buffer");
+
 	if (sendto(tun->fd,
-	    data, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+	    ptr, len, 0, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("sendto: %s", strerror(errno));
 }
