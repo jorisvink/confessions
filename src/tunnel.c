@@ -146,7 +146,7 @@ confessions_tunnel_manage(struct state *state, struct tunnel *tun)
 
 	if (state->mode != CONFESSIONS_MODE_DIRECT &&
 	    state->now >= tun->cathedral_notify) {
-		tun->cathedral_notify = state->now + 1;
+		tun->cathedral_notify = state->now + 5;
 
 		if (kyrka_cathedral_notify(tun->ctx) == -1)
 			fatal("failed to notify cathedral");
@@ -159,7 +159,7 @@ confessions_tunnel_manage(struct state *state, struct tunnel *tun)
 	    kyrka_last_error(tun->ctx) != KYRKA_ERROR_NO_SECRET)
 		fatal("kyrka_key_manage: %d", kyrka_last_error(tun->ctx));
 
-	if (tun->last_rx != 0 && (state->now - tun->last_rx) >= 30) {
+	if (tun->last_rx != 0 && (state->now - tun->last_rx) >= 45) {
 		tun->last_rx = state->now;
 		kyrka_peer_timeout(tun->ctx);
 	}
