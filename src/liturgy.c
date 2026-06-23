@@ -64,6 +64,11 @@ confessions_liturgy_initialize(struct state *state)
 	state->cathedral.kek = kek;
 	state->liturgy.mstate = state;
 
+	if (kyrka_mtu_size(state->liturgy.ctx, 800) == -1) {
+		fatal("kyrka_mtu_size: %d",
+		    kyrka_last_error(state->liturgy.ctx));
+	}
+
 	confessions_tunnel_socket(state, &state->liturgy);
 }
 

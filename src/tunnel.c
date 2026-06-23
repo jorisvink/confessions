@@ -82,6 +82,11 @@ confessions_tunnel_alloc(struct state *state, struct kyrka_cathedral_cfg *cfg)
 	if (kyrka_purgatory_ifc(tun->ctx, tunnel_crypto_send, tun) == -1)
 		fatal("failed to set purgatory interface");
 
+	if (kyrka_mtu_size(state->liturgy.ctx, 800) == -1) {
+		fatal("kyrka_mtu_size: %d",
+		    kyrka_last_error(state->liturgy.ctx));
+	}
+
 	tun->peer_ip = state->cathedral_ip;
 	tun->peer_port = state->cathedral_port;
 
