@@ -175,6 +175,7 @@ struct state {
 	/* Misc stuff. */
 	int				mode;
 	int				debug;
+	int				shroud;
 
 	/* Path to secret. */
 	const char			*secret;

@@ -55,6 +55,18 @@ confessions_liturgy_initialize(struct state *state)
 	state->cathedral.udata = &state->liturgy;
 	state->cathedral.send = liturgy_cathedral_send;
 
+	if (kyrka_mtu_size(state->liturgy.ctx, 1000) == -1) {
+		fatal("kyrka_mtu_size: %d",
+		    kyrka_last_error(state->liturgy.ctx));
+	}
+
+	if (state->shroud != 0) {
+		if (kyrka_shroud_enable(state->liturgy.ctx) == -1) {
+			fatal("kyrka_shroud_enable: %d",
+			    kyrka_last_error(state->liturgy.ctx));
+		}
+	}
+
 	if (kyrka_cathedral_config(state->liturgy.ctx,
 	    &state->cathedral) == -1) {
 		fatal("cathedral config: %d",
@@ -63,11 +75,6 @@ confessions_liturgy_initialize(struct state *state)
 
 	state->cathedral.kek = kek;
 	state->liturgy.mstate = state;
-
-	if (kyrka_mtu_size(state->liturgy.ctx, 800) == -1) {
-		fatal("kyrka_mtu_size: %d",
-		    kyrka_last_error(state->liturgy.ctx));
-	}
 
 	confessions_tunnel_socket(state, &state->liturgy);
 }
@@ -148,7 +155,11 @@ liturgy_cathedral_send(struct kyrka_packet *pkt, u_int64_t msg, void *udata)
 	size_t			len;
 	struct sockaddr_in	sin;
 	struct tunnel		*tun;
+#if !defined(PLATFORM_WINDOWS)
 	u_int8_t		*ptr;
+#else
+	const char		*ptr;
+#endif
 	struct state		*state;
 
 	PRECOND(pkt != NULL);

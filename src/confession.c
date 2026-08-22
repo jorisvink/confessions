@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #else
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -71,6 +72,7 @@ usage(void)
 	printf("\n");
 	printf("Generic options:\n");
 	printf("  -s <path>       - The shared secret or cathedral secret\n");
+	printf("  -x              - Turn shroud off\n");
 	printf("\n");
 	printf("Direct specific options:\n");
 	printf("  -b <ip:port>    - Bind to the given ip:port\n");
@@ -104,10 +106,13 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-	int				ch;
+	struct sockaddr_in		*sin;
 	struct state			state;
+	char				*port;
 	u_int8_t			domain;
+	int				ch, ret;
 	struct kyrka_cathedral_cfg	*cathedral;
+	struct addrinfo			hints, *res, *rp;
 	u_int64_t			flock_src, flock_dst;
 
 	if (argc < 3)
@@ -120,6 +125,8 @@ main(int argc, char **argv)
 	flock_dst = 0;
 	flock_src = 0;
 	cathedral = NULL;
+
+	state.shroud = 1;
 	state.mode = CONFESSIONS_MODE_DIRECT;
 
 	/*
@@ -201,6 +208,9 @@ main(int argc, char **argv)
 		case 'v':
 			state.debug = 1;
 			break;
+		case 'x':
+			state.shroud = 0;
+			break;
 		default:
 			usage();
 		}
@@ -211,6 +221,30 @@ main(int argc, char **argv)
 
 	if (argc != 1)
 		usage();
+
+	if ((port = strchr(argv[0], ':')) == NULL)
+		fatal("cathedral must be in <ip:port> format");
+
+	*(port)++ = '\0';
+	memset(&hints, 0, sizeof(hints));
+
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+
+	if ((ret = getaddrinfo(argv[0], port, &hints, &res)) != 0)
+		fatal("cathedral '%s': %s", argv[0], gai_strerror(ret));
+
+	for (rp = res; rp != NULL; rp = rp->ai_next) {
+		if (rp->ai_family == AF_INET && rp->ai_socktype == SOCK_DGRAM)
+			break;
+	}
+
+	if (rp == NULL)
+		fatal("cathedral '%s' failed to resolve", argv[0]);
+
+	sin = (struct sockaddr_in *)rp->ai_addr;
+	state.cathedral_port = sin->sin_port;
+	state.cathedral_ip = sin->sin_addr.s_addr;
 
 	switch (state.mode) {
 	case CONFESSIONS_MODE_DIRECT:
@@ -256,9 +290,6 @@ main(int argc, char **argv)
 #endif
 
 	confessions_signal_initialize();
-	confessions_split_ip_port(argv[0],
-	    &state.cathedral_ip, &state.cathedral_port);
-
 	confessions_audio_init(&state);
 	confessions_buffers_initialize(&state);
 

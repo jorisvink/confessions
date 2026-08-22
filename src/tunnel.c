@@ -23,6 +23,7 @@
 #include <poll.h>
 #else
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #define poll WSAPoll
 #define MSG_DONTWAIT 0
 #endif
@@ -64,6 +65,16 @@ confessions_tunnel_alloc(struct state *state, struct kyrka_cathedral_cfg *cfg)
 	if ((tun->ctx = kyrka_ctx_alloc(tunnel_event, tun)) == NULL)
 		fatal("failed to allocate new KYRKA context");
 
+	if (kyrka_mtu_size(tun->ctx, 1000) == -1)
+		fatal("kyrka_mtu_size: %d", kyrka_last_error(tun->ctx));
+
+	if (state->shroud != 0) {
+		if (kyrka_shroud_enable(tun->ctx) == -1) {
+			fatal("kyrka_shroud_enable: %d",
+			    kyrka_last_error(tun->ctx));
+		}
+	}
+
 	if (cfg != NULL) {
 		cfg->udata = tun;
 		cfg->send = tunnel_cathedral_send;
@@ -81,11 +92,6 @@ confessions_tunnel_alloc(struct state *state, struct kyrka_cathedral_cfg *cfg)
 
 	if (kyrka_purgatory_ifc(tun->ctx, tunnel_crypto_send, tun) == -1)
 		fatal("failed to set purgatory interface");
-
-	if (kyrka_mtu_size(state->liturgy.ctx, 800) == -1) {
-		fatal("kyrka_mtu_size: %d",
-		    kyrka_last_error(state->liturgy.ctx));
-	}
 
 	tun->peer_ip = state->cathedral_ip;
 	tun->peer_port = state->cathedral_port;
@@ -385,7 +391,11 @@ tunnel_socket_read(struct tunnel *tun)
 	size_t			len;
 	ssize_t			ret;
 	struct kyrka_packet	pkt;
+#if !defined(PLATFORM_WINDOWS)
 	u_int8_t		*ptr;
+#else
+	char			*ptr;
+#endif
 	struct sockaddr_in	peer;
 	socklen_t		socklen;
 
@@ -515,7 +525,11 @@ tunnel_crypto_send(struct kyrka_packet *pkt, u_int64_t seq, void *udata)
 {
 	struct sockaddr_in	sin;
 	size_t			len;
+#if !defined(PLATFORM_WINDOWS)
 	u_int8_t		*ptr;
+#else
+	const char		*ptr;
+#endif
 	struct tunnel		*tun;
 
 	PRECOND(pkt != NULL);
@@ -549,7 +563,11 @@ tunnel_cathedral_send(struct kyrka_packet *pkt, u_int64_t msg, void *udata)
 	struct sockaddr_in	sin;
 	u_int16_t		port;
 	struct tunnel		*tun;
+#if !defined(PLATFORM_WINDOWS)
 	u_int8_t		*ptr;
+#else
+	const char		*ptr;
+#endif
 	struct state		*state;
 
 	PRECOND(pkt != NULL);
